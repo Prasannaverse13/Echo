@@ -3,62 +3,202 @@
 import * as React from "react";
 import { Button, FeatureTag, FeatureCard } from "@/components/ui";
 
-type Phase = "idle" | "recording" | "paused" | "learning" | "review";
+type Phase = "idle" | "permission" | "recording" | "paused" | "uploading" | "learning" | "review" | "error";
+
+interface ReconstructedStep {
+  num: number;
+  title: string;
+  detail: string;
+  at: string;
+}
 
 export default function RecordPage() {
   const [phase, setPhase] = React.useState<Phase>("idle");
+  const [error, setError] = React.useState<string | null>(null);
   const [elapsed, setElapsed] = React.useState(0);
-  const [steps, setSteps] = React.useState<
-    { num: number; title: string; detail: string; at: string }[]
-  >([]);
+  const [frames, setFrames] = React.useState<number>(0);
+  const [stream, setStream] = React.useState<MediaStream | null>(null);
+  const [steps, setSteps] = React.useState<ReconstructedStep[]>([]);
+  const [skillName, setSkillName] = React.useState("");
+  const [skillDescription, setSkillDescription] = React.useState("");
 
+  const videoRef = React.useRef<HTMLVideoElement>(null);
+  const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const captureIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
+  const frameBlobsRef = React.useRef<Blob[]>([]);
+  const phaseRef = React.useRef<Phase>("idle");
+
+  React.useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
+  // Timer for recording
   React.useEffect(() => {
     if (phase !== "recording") return;
     const t = setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => clearInterval(t);
   }, [phase]);
 
+  // Cleanup stream on unmount
+  React.useEffect(() => {
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+      }
+      if (captureIntervalRef.current) {
+        clearInterval(captureIntervalRef.current);
+      }
+    };
+  }, [stream]);
+
+  const startRecording = async () => {
+    setError(null);
+    setPhase("permission");
+    try {
+      // Browser screen capture — works in any modern browser on Mac, Windows, Linux
+      const mediaStream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          frameRate: 1,
+          displaySurface: "browser", // prefer browser tab, fall back to window/screen
+        },
+        audio: false,
+        ...({
+          preferCurrentTab: true,
+          selfBrowserSurface: "include",
+        } as object),
+      });
+
+      setStream(mediaStream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream;
+        await videoRef.current.play();
+      }
+
+      // Detect when user clicks "Stop sharing" in browser UI
+      mediaStream.getVideoTracks()[0].addEventListener("ended", () => {
+        if (phaseRef.current === "recording") {
+          stopAndLearn();
+        }
+      });
+
+      setPhase("recording");
+      setElapsed(0);
+      setFrames(0);
+      frameBlobsRef.current = [];
+
+      // Capture a frame every 2 seconds while recording
+      captureIntervalRef.current = setInterval(() => {
+        captureFrame();
+      }, 2000);
+    } catch (err) {
+      setPhase("idle");
+      if (err instanceof Error) {
+        if (err.name === "NotAllowedError") {
+          setError(
+            "You dismissed the screen share prompt. Click Start again and pick a screen or tab to share."
+          );
+        } else if (err.name === "NotSupportedError") {
+          setError(
+            "Your browser doesn't support screen capture. Try Chrome, Edge, Arc, or Brave."
+          );
+        } else {
+          setError(`Couldn't start recording: ${err.message}`);
+        }
+      } else {
+        setError("Couldn't start recording. Please try again.");
+      }
+    }
+  };
+
+  const captureFrame = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (video.videoWidth === 0) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    canvas.toBlob(
+      (blob) => {
+        if (blob) {
+          frameBlobsRef.current.push(blob);
+          setFrames((n) => n + 1);
+        }
+      },
+      "image/jpeg",
+      0.7
+    );
+  };
+
+  const stopAndLearn = async () => {
+    if (captureIntervalRef.current) {
+      clearInterval(captureIntervalRef.current);
+      captureIntervalRef.current = null;
+    }
+    if (stream) {
+      stream.getTracks().forEach((t) => t.stop());
+      setStream(null);
+    }
+
+    if (frameBlobsRef.current.length === 0) {
+      setError(
+        "No frames captured. Make sure you shared a visible screen or tab."
+      );
+      setPhase("idle");
+      return;
+    }
+
+    setPhase("uploading");
+    // Brief upload phase for UX feedback
+    await new Promise((r) => setTimeout(r, 600));
+    setPhase("learning");
+
+    try {
+      const res = await fetch("/api/skills/reconstruct", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          frameCount: frameBlobsRef.current.length,
+          durationSec: elapsed,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Reconstruction failed: ${res.status}`);
+      }
+
+      const data = await res.json();
+      setSteps(data.steps);
+      setSkillName(data.suggestedName ?? "");
+      setSkillDescription(data.suggestedDescription ?? "");
+      setPhase("review");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Echo couldn't reconstruct this skill. Please try again."
+      );
+      setPhase("idle");
+    }
+  };
+
+  const reset = () => {
+    setPhase("idle");
+    setError(null);
+    setElapsed(0);
+    setFrames(0);
+    setSteps([]);
+    setSkillName("");
+    setSkillDescription("");
+    frameBlobsRef.current = [];
+  };
+
   const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
   const ss = String(elapsed % 60).padStart(2, "0");
-
-  const startRecording = () => {
-    setPhase("recording");
-    setElapsed(0);
-    setSteps([]);
-  };
-
-  const stopAndLearn = () => {
-    setPhase("learning");
-    setTimeout(() => {
-      setPhase("review");
-      setSteps([
-        {
-          num: 1,
-          title: "Detect new file in Drive/Invoices",
-          detail: "Echo watches the folder for new PDFs.",
-          at: "00:00",
-        },
-        {
-          num: 2,
-          title: "Extract tabular data",
-          detail: "Reads line items, totals, vendor info from the PDF.",
-          at: "00:14",
-        },
-        {
-          num: 3,
-          title: "Append to Google Sheet",
-          detail: "Maps fields to columns and appends a new row.",
-          at: "00:32",
-        },
-        {
-          num: 4,
-          title: "Send Slack notification",
-          detail: "Posts to #finance with the total and a Drive link.",
-          at: "00:51",
-        },
-      ]);
-    }, 2200);
-  };
 
   return (
     <div className="page-container py-10">
@@ -66,8 +206,8 @@ export default function RecordPage() {
         <p className="text-caption text-obsidian/50 mb-2">Record</p>
         <h1 className="text-display-md font-bold">Teach Echo a new skill.</h1>
         <p className="mt-3 text-body text-obsidian/70 max-w-2xl">
-          Perform the workflow on your screen. Echo will watch, then
-          reconstruct it as a reusable skill you can run forever.
+          Perform the workflow on your screen. Echo watches, learns the
+          pattern, then runs it forever — on any input, in the background.
         </p>
       </div>
 
@@ -80,13 +220,13 @@ export default function RecordPage() {
             padding="md"
             className={phase !== "recording" ? "hairline" : ""}
           >
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
               <div className="flex items-center gap-4">
                 <div
                   className={`w-3 h-3 rounded-full ${
                     phase === "recording"
                       ? "bg-red-500 animate-pulse"
-                      : phase === "learning"
+                      : phase === "learning" || phase === "uploading"
                         ? "bg-slate-teal animate-pulse"
                         : "bg-obsidian/20"
                   }`}
@@ -98,8 +238,9 @@ export default function RecordPage() {
                     }`}
                   >
                     {phase === "idle" && "Ready"}
+                    {phase === "permission" && "Requesting screen access..."}
                     {phase === "recording" && "Recording"}
-                    {phase === "paused" && "Paused"}
+                    {phase === "uploading" && "Uploading frames..."}
                     {phase === "learning" && "Echo is learning..."}
                     {phase === "review" && "Skill ready for review"}
                   </p>
@@ -109,65 +250,109 @@ export default function RecordPage() {
                     }`}
                   >
                     {mm}:{ss}
+                    {phase === "recording" && (
+                      <span className="text-caption font-normal opacity-60 ml-3">
+                        · {frames} frame{frames === 1 ? "" : "s"} captured
+                      </span>
+                    )}
                   </p>
                 </div>
               </div>
               <div className="flex gap-2">
                 {phase === "idle" && (
-                  <Button variant="light" size="md" onClick={startRecording}>
+                  <Button
+                    variant="light"
+                    size="md"
+                    onClick={startRecording}
+                  >
                     ◉ Start recording
                   </Button>
                 )}
-                {phase === "recording" && (
-                  <>
-                    <Button variant="outline-dark" size="md">
-                      ⏸ Pause
-                    </Button>
-                    <Button variant="dark" size="md" onClick={stopAndLearn}>
-                      ⏹ Stop & learn
-                    </Button>
-                  </>
-                )}
-                {phase === "learning" && (
+                {(phase === "permission" ||
+                  phase === "uploading" ||
+                  phase === "learning") && (
                   <Button variant="outline-light" size="md" disabled>
-                    ◌ Processing...
+                    ◌ {phase === "learning" ? "Reconstructing..." : "Working..."}
+                  </Button>
+                )}
+                {phase === "recording" && (
+                  <Button variant="dark" size="md" onClick={stopAndLearn}>
+                    ⏹ Stop & learn
                   </Button>
                 )}
                 {phase === "review" && (
-                  <Button variant="light" size="md">
-                    ✓ Save skill
-                  </Button>
+                  <>
+                    <Button variant="outline-light" size="md" onClick={reset}>
+                      ↻ Re-record
+                    </Button>
+                    <Button variant="light" size="md">
+                      ✓ Save skill
+                    </Button>
+                  </>
                 )}
               </div>
             </div>
           </FeatureCard>
 
+          {error && (
+            <FeatureCard surface="desert-clay" padding="md">
+              <p className="text-body-sm font-medium">⚠ {error}</p>
+            </FeatureCard>
+          )}
+
           {/* Screen preview */}
-          <FeatureCard surface="deep-teal" padding="lg" className="aspect-video flex flex-col items-center justify-center text-paper-white">
-            <div className="w-16 h-16 rounded-full bg-paper-white/10 flex items-center justify-center mb-4">
-              <span className="text-3xl">◉</span>
-            </div>
-            <p className="text-heading-sm font-medium mb-1">
-              {phase === "idle" && "Your screen will appear here"}
-              {phase === "recording" && "Capturing your screen..."}
-              {phase === "learning" && "Reconstructing with Gemini..."}
-              {phase === "review" && "Skill reconstructed"}
-            </p>
-            <p className="text-body-sm text-paper-white/60 text-center max-w-sm">
-              {phase === "idle" && "Click start, then perform your workflow anywhere on your screen."}
-              {phase === "recording" && "Do the workflow naturally. Echo is watching."}
-              {phase === "learning" && "Extracting intent, steps, and decision points."}
-              {phase === "review" && "Review the reconstructed skill below, then save."}
-            </p>
-            {phase === "recording" && (
-              <div className="mt-6 px-4 py-2 rounded-full bg-red-500/20 border border-red-500/40">
-                <span className="text-caption font-medium text-red-200">● REC</span>
-              </div>
+          <FeatureCard
+            surface="deep-teal"
+            padding="lg"
+            className="aspect-video flex flex-col items-center justify-center text-paper-white overflow-hidden relative"
+          >
+            {phase === "recording" ? (
+              <>
+                <video
+                  ref={videoRef}
+                  className="absolute inset-0 w-full h-full object-contain bg-obsidian"
+                  muted
+                  playsInline
+                />
+                <div className="absolute top-4 left-4 z-10">
+                  <div className="px-3 py-1.5 rounded-full bg-red-500/90 backdrop-blur-sm flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-paper-white animate-pulse" />
+                    <span className="text-caption font-bold text-paper-white tracking-wider">
+                      REC
+                    </span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="w-16 h-16 rounded-full bg-paper-white/10 flex items-center justify-center mb-4">
+                  <span className="text-3xl">◉</span>
+                </div>
+                <p className="text-heading-sm font-medium mb-1">
+                  {phase === "idle" && "Click Start to share your screen"}
+                  {phase === "permission" && "Pick a tab or window to share"}
+                  {phase === "uploading" && "Uploading frames to Gemini..."}
+                  {phase === "learning" && "Reconstructing your skill..."}
+                  {phase === "review" && "Skill reconstructed!"}
+                </p>
+                <p className="text-body-sm text-paper-white/60 text-center max-w-sm px-4">
+                  {phase === "idle" &&
+                    "Echo uses your browser's built-in screen capture. No install, no extension — works in Chrome, Edge, Arc, and Brave."}
+                  {phase === "permission" &&
+                    "Choose a browser tab, window, or entire screen. We capture a frame every 2 seconds."}
+                  {phase === "learning" &&
+                    "Gemini 3.5 Flash is analyzing your frames to extract intent, steps, and decision points."}
+                  {phase === "review" &&
+                    "Review the steps below, name your skill, then save it to your library."}
+                </p>
+              </>
             )}
+            {/* Hidden canvas for frame capture */}
+            <canvas ref={canvasRef} className="hidden" />
           </FeatureCard>
 
           {/* Review panel */}
-          {phase === "review" && (
+          {phase === "review" && steps.length > 0 && (
             <div>
               <h2 className="text-heading-sm font-bold mb-3">
                 Echo reconstructed these steps
@@ -214,44 +399,56 @@ export default function RecordPage() {
             </label>
             <input
               type="text"
+              value={skillName}
+              onChange={(e) => setSkillName(e.target.value)}
               placeholder="e.g. PDF → Sheets"
-              className="w-full px-3 py-2 rounded-lg border border-iron bg-paper-white text-body-sm mb-3 focus:outline-none focus:border-obsidian"
+              disabled={phase !== "review"}
+              className="w-full px-3 py-2 rounded-lg border border-iron bg-paper-white text-body-sm mb-3 focus:outline-none focus:border-obsidian disabled:opacity-50"
             />
             <label className="text-caption font-medium block mb-1">
               Description
             </label>
             <textarea
+              value={skillDescription}
+              onChange={(e) => setSkillDescription(e.target.value)}
               rows={3}
               placeholder="What does this skill accomplish?"
-              className="w-full px-3 py-2 rounded-lg border border-iron bg-paper-white text-body-sm resize-none focus:outline-none focus:border-obsidian"
+              disabled={phase !== "review"}
+              className="w-full px-3 py-2 rounded-lg border border-iron bg-paper-white text-body-sm resize-none focus:outline-none focus:border-obsidian disabled:opacity-50"
             />
           </FeatureCard>
 
           <FeatureCard surface="dusty-sky" padding="md">
             <h3 className="text-caption font-medium uppercase opacity-60 mb-2">
-              Tips
+              How it works
             </h3>
             <ul className="text-body-sm space-y-2">
-              <li>• Speak out loud what you're doing — Echo transcribes audio for intent.</li>
-              <li>• Do the workflow at your normal pace. No need to slow down.</li>
-              <li>• Make sure to show the trigger (e.g. the file arriving, the email opening).</li>
-              <li>• End at the success state so Echo learns the completion criteria.</li>
+              <li>• Echo uses your browser's built-in screen capture — no install.</li>
+              <li>• Frames are captured every 2 seconds and sent to Gemini Vision.</li>
+              <li>• Gemini reconstructs the intent and ordered steps from your frames.</li>
+              <li>• You can edit the steps before saving.</li>
             </ul>
           </FeatureCard>
 
           <FeatureCard surface="paper-white" padding="md" className="hairline">
             <h3 className="text-caption font-medium uppercase opacity-60 mb-3">
-              Permissions
+              Browser support
             </h3>
             <ul className="space-y-2 text-body-sm">
               <li className="flex items-center gap-2">
-                <span className="text-slate-teal">●</span> Screen capture
+                <span className="text-mist-mint">●</span> Chrome 94+
               </li>
               <li className="flex items-center gap-2">
-                <span className="text-slate-teal">●</span> Microphone (optional)
+                <span className="text-mist-mint">●</span> Edge 94+
               </li>
               <li className="flex items-center gap-2">
-                <span className="text-obsidian/30">○</span> Webcam
+                <span className="text-mist-mint">●</span> Arc, Brave, Opera
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="text-obsidian/30">○</span> Firefox (limited)
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="text-obsidian/30">○</span> Safari
               </li>
             </ul>
           </FeatureCard>
