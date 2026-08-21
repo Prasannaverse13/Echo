@@ -1,0 +1,243 @@
+@import "tailwindcss";
+
+/* ============================================================
+   ECHO — Design System
+   Inspired by 11x.ai editorial desert aesthetic
+   Primary serif: Playfair Display (free ES Allianz substitute)
+   ============================================================ */
+
+@theme {
+  /* Colors — Obsidian/Ink system */
+  --color-obsidian: #000000;
+  --color-paper-white: #ffffff;
+  --color-deep-teal: #0b252a;
+  --color-bone: #f6f5f5;
+  --color-sandstone: #f5ece5;
+  --color-ash-blush: #ede2d7;
+  --color-stone: #d7cecc;
+  --color-iron: #e1dad9;
+  --color-pewter: #afaeae;
+  --color-charcoal: #222222;
+
+  /* Pastels — Feature card tints */
+  --color-dusty-sky: #c5d5e8;
+  --color-mist-mint: #d4e6eb;
+  --color-wisteria: #efe5f9;
+  --color-desert-clay: #e7d3bf;
+
+  /* Accent */
+  --color-slate-teal: #406e7a;
+  --color-saddle-brown: #4c312b;
+
+  /* Surfaces */
+  --surface-paper-white: #ffffff;
+  --surface-bone: #f6f5f5;
+  --surface-sandstone: #f5ece5;
+  --surface-pastel-card: #efe5f9;
+  --surface-deep-teal: #0b252a;
+
+  /* Typography — Font Families */
+  --font-serif: var(--font-playfair), ui-serif, Georgia, "Times New Roman", serif;
+
+  /* Spacing */
+  --spacing-8: 8px;
+  --spacing-16: 16px;
+  --spacing-24: 24px;
+  --spacing-32: 32px;
+  --spacing-40: 40px;
+  --spacing-48: 48px;
+  --spacing-64: 64px;
+  --spacing-72: 72px;
+  --spacing-80: 80px;
+  --spacing-128: 128px;
+  --spacing-136: 136px;
+  --spacing-192: 192px;
+
+  /* Radii */
+  --radius-sm: 2px;
+  --radius-lg: 8px;
+  --radius-2xl: 16px;
+  --radius-3xl: 24px;
+  --radius-portrait: 32px;
+  --radius-full: 999px;
+
+  /* Layout */
+  --container-page: 1200px;
+}
+
+:root {
+  --color-obsidian: #000000;
+  --color-paper-white: #ffffff;
+  --color-deep-teal: #0b252a;
+  --color-bone: #f6f5f5;
+  --color-sandstone: #f5ece5;
+  --color-ash-blush: #ede2d7;
+  --color-stone: #d7cecc;
+  --color-iron: #e1dad9;
+  --color-pewter: #afaeae;
+  --color-charcoal: #222222;
+  --color-dusty-sky: #c5d5e8;
+  --color-mist-mint: #d4e6eb;
+  --color-wisteria: #efe5f9;
+  --color-desert-clay: #e7d3bf;
+  --color-slate-teal: #406e7a;
+  --color-saddle-brown: #4c312b;
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+html,
+body {
+  background: var(--color-paper-white);
+  color: var(--color-obsidian);
+  font-family: var(--font-serif);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "kern", "liga", "calt";
+}
+
+html {
+  overflow-x: hidden;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+/* Selection */
+::selection {
+  background: var(--color-obsidian);
+  color: var(--color-paper-white);
+}
+
+/* ============================================================
+   Editorial typography utilities
+   (Playfair Display tracking mirrors ES Allianz editorial stance)
+   ============================================================ */
+.font-display {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.045em;
+}
+
+.text-display-xl {
+  font-size: clamp(64px, 12vw, 152px);
+  line-height: 0.85;
+  letter-spacing: -0.045em;
+  font-weight: 700;
+}
+
+.text-display {
+  font-size: clamp(48px, 7vw, 74px);
+  line-height: 1;
+  letter-spacing: -0.045em;
+  font-weight: 700;
+}
+
+.text-display-md {
+  font-size: clamp(36px, 4.5vw, 56px);
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  font-weight: 500;
+}
+
+.text-heading {
+  font-size: clamp(32px, 4vw, 46px);
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  font-weight: 500;
+}
+
+.text-heading-sm {
+  font-size: 32px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  font-weight: 500;
+}
+
+.text-subheading {
+  font-size: 19px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  font-weight: 500;
+}
+
+.text-body {
+  font-size: 18px;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+  font-weight: 400;
+}
+
+.text-body-sm {
+  font-size: 16px;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+  font-weight: 400;
+}
+
+.text-caption {
+  font-size: 14px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  font-weight: 500;
+}
+
+/* ============================================================
+   Page layout helpers
+   ============================================================ */
+.page-container {
+  max-width: var(--container-page);
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 24px;
+  padding-right: 24px;
+}
+
+@media (min-width: 768px) {
+  .page-container {
+    padding-left: 40px;
+    padding-right: 40px;
+  }
+}
+
+.section-gap {
+  padding-top: 64px;
+  padding-bottom: 64px;
+}
+
+@media (min-width: 768px) {
+  .section-gap {
+    padding-top: 80px;
+    padding-bottom: 80px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .section-gap {
+    padding-top: 128px;
+    padding-bottom: 128px;
+  }
+}
+
+/* ============================================================
+   Component classes
+   ============================================================ */
+.hairline {
+  border: 1px solid var(--color-iron);
+}
+
+.hairline-dark {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* Hide scrollbar but keep functionality (for marquee/tag rows) */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
