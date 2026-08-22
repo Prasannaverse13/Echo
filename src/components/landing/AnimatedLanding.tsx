@@ -2,13 +2,11 @@
 
 import * as React from "react";
 import { Button, FeatureTag, FeatureCard } from "@/components/ui";
+import { EchoHero } from "@/components/ui/echo-hero";
 import {
   Reveal,
   StaggerReveal,
-  CountUp,
-  Parallax,
   Marquee,
-  HeroHeading,
 } from "@/components/motion";
 
 const featureTags = [
@@ -35,91 +33,8 @@ const featureTags = [
 export function AnimatedLanding() {
   return (
     <>
-      {/* Hero — full bleed editorial */}
-      <section className="relative bg-deep-teal text-paper-white overflow-hidden">
-        {/* Background gradient with parallax */}
-        <Parallax className="absolute inset-0 opacity-50 will-change-transform" speed={0.15}>
-          <div
-            aria-hidden
-            className="absolute inset-0"
-            style={{
-              background:
-                "radial-gradient(ellipse at 30% 20%, #4c312b 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, #406e7a 0%, transparent 55%), linear-gradient(135deg, #0b252a 0%, #1a3539 100%)",
-            }}
-          />
-          {/* Floating grain/dust dots for editorial feel */}
-          <div
-            aria-hidden
-            className="absolute inset-0 opacity-30"
-            style={{
-              backgroundImage:
-                "radial-gradient(circle at 20% 30%, rgba(199, 213, 232, 0.4) 0%, transparent 1%), radial-gradient(circle at 80% 70%, rgba(239, 229, 249, 0.3) 0%, transparent 1%), radial-gradient(circle at 50% 50%, rgba(231, 211, 191, 0.3) 0%, transparent 1%)",
-              backgroundSize: "200px 200px",
-            }}
-          />
-        </Parallax>
-
-        <div className="relative page-container section-gap">
-          <div className="flex flex-col items-center text-center max-w-5xl mx-auto">
-            <Reveal>
-              <FeatureTag variant="slate-teal" className="mb-8">
-                All Things Agentic Hackathon · 2026
-              </FeatureTag>
-            </Reveal>
-
-            <HeroHeading
-              line1="Show it once."
-              line2="Run it forever."
-              className="text-display-xl font-bold text-paper-white"
-            />
-
-            <Reveal delay={0.6} y={20}>
-              <p className="mt-8 max-w-2xl text-body text-paper-white/80">
-                Echo watches you do a workflow once, then re-runs it
-                autonomously across thousands of inputs — in the background,
-                while you do literally anything else. Built on Gemini and Google
-                Cloud.
-              </p>
-            </Reveal>
-
-            <Reveal delay={0.8} y={20}>
-              <div className="mt-12 flex flex-col sm:flex-row gap-4">
-                <Button variant="dark" size="lg" href="/signup">
-                  Try Echo free →
-                </Button>
-                <Button variant="outline-dark" size="lg" href="/how-it-works">
-                  Watch demo
-                </Button>
-              </div>
-            </Reveal>
-
-            <StaggerReveal
-              delay={1.0}
-              stagger={0.12}
-              className="mt-20 grid grid-cols-3 gap-8 text-paper-white/70 max-w-2xl w-full"
-            >
-              <div>
-                <p className="text-display-md font-bold text-paper-white">
-                  <CountUp to={2847} duration={2.4} />
-                </p>
-                <p className="text-caption mt-1">Skills learned today</p>
-              </div>
-              <div>
-                <p className="text-display-md font-bold text-paper-white">
-                  <CountUp to={41} duration={2.0} suffix="k" />
-                </p>
-                <p className="text-caption mt-1">Workflows running</p>
-              </div>
-              <div>
-                <p className="text-display-md font-bold text-paper-white">
-                  <CountUp to={98.4} duration={2.4} decimals={1} suffix="%" />
-                </p>
-                <p className="text-caption mt-1">Avg success rate</p>
-              </div>
-            </StaggerReveal>
-          </div>
-        </div>
-      </section>
+      {/* Hero — full-bleed cinematic video with WordsPullUp + parallax copy */}
+      <EchoHero />
 
       {/* Pillars */}
       <section className="page-container section-gap">
