@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
+import { isGcpAvailable, writeDoc } from "@/lib/gcp";
 
 /**
  * POST /api/agents/compose
@@ -11,6 +12,9 @@ import { GoogleGenAI } from "@google/genai";
  *   - Estimated time & cost
  *
  * This is the headline "auto-compose" feature.
+ *
+ * When GCP is enabled, the composed agent plan is persisted to Firestore
+ * (collection: `agents`) so the Agent Manager page can list it.
  */
 
 interface ComposeRequest {
@@ -83,6 +87,11 @@ export async function POST(req: NextRequest) {
 
       const text = response.text ?? "{}";
       const parsed = JSON.parse(text);
+      writeDoc(
+        "agents",
+        undefined,
+        { goal: body.goal, ...(parsed as object) } as unknown as Record<string, unknown>
+      ).catch(() => undefined);
       return NextResponse.json({ ok: true, source: "gemini", ...parsed });
     } catch (err) {
       console.error("[compose] Gemini call failed, falling back to mock:", err);
@@ -170,12 +179,23 @@ export async function POST(req: NextRequest) {
   // Simulate a tiny bit of latency
   await new Promise((r) => setTimeout(r, 600));
 
-  return NextResponse.json({
-    ok: true,
-    source: "mock",
+  const plan = {
     subtasks,
     totalEstTime: "12m",
     totalEstCost: "$0.42",
     reasoning: `Echo broke your goal into ${subtasks.length} sub-tasks, matching ${subtasks.filter((s) => !s.matchedSkill.startsWith("NEW:")).length} to existing skills in your library.`,
+  };
+
+  writeDoc(
+    "agents",
+    undefined,
+    { goal: body.goal, ...plan } as unknown as Record<string, unknown>
+  ).catch(() => undefined);
+
+  return NextResponse.json({
+    ok: true,
+    source: "mock",
+    gcp: isGcpAvailable() ? "connected" : "disabled",
+    ...plan,
   });
 }

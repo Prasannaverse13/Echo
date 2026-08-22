@@ -9,6 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@google-cloud/firestore": "^9.0.0",
+    "@google-cloud/pubsub": "^6.0.1",
     "@google-cloud/vertexai": "^1.12.0",
     "@google/genai": "^2.18.0",
     "framer-motion": "^13.1.1",

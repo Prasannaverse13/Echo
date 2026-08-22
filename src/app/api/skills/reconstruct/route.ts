@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
+import { isGcpAvailable, writeDoc } from "@/lib/gcp";
 
 /**
  * POST /api/skills/reconstruct
@@ -13,6 +14,11 @@ import { GoogleGenAI } from "@google/genai";
  * If GEMINI_API_KEY is set, this route calls Gemini 3.5 Flash to generate a
  * skill from a brief workflow description. Otherwise it returns a mock that
  * still demonstrates the full product flow end-to-end.
+ *
+ * When GCP is enabled, the reconstructed skill is persisted to Firestore
+ * (collection: `skills`) so the Composer and Skill Library pages can read
+ * it back. Failures to write to GCP are logged but never block the
+ * response — the demo must keep working without GCP configured.
  */
 
 interface ReconstructedSkill {
@@ -69,6 +75,12 @@ export async function POST(req: NextRequest) {
 
       const text = response.text ?? "{}";
       const parsed = JSON.parse(text) as ReconstructedSkill;
+      // Best-effort persist to Firestore (non-blocking)
+      writeDoc(
+        "skills",
+        undefined,
+        parsed as unknown as Record<string, unknown>
+      ).catch(() => undefined);
       return NextResponse.json({ ok: true, source: "gemini", ...parsed });
     } catch (err) {
       console.error("[reconstruct] Gemini call failed, falling back to mock:", err);
@@ -130,5 +142,17 @@ export async function POST(req: NextRequest) {
   // Simulate a tiny bit of latency so the UI's "Reconstructing..." state is visible
   await new Promise((r) => setTimeout(r, 400));
 
-  return NextResponse.json({ ok: true, source: "mock", ...mock });
+  // Best-effort persist to Firestore (non-blocking)
+  writeDoc(
+    "skills",
+    undefined,
+    mock as unknown as Record<string, unknown>
+  ).catch(() => undefined);
+
+  return NextResponse.json({
+    ok: true,
+    source: "mock",
+    gcp: isGcpAvailable() ? "connected" : "disabled",
+    ...mock,
+  });
 }
