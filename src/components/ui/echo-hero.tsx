@@ -126,40 +126,39 @@ export const EchoHero = () => {
           muted
           playsInline
           preload="auto"
-          className="absolute inset-0 h-full w-full object-cover"
+          className="absolute inset-0 h-full w-full object-cover z-0"
           src="/echo-hero-clean.mp4"
         />
 
-        {/* Cinematic gradient fallback (shows during video load or if it fails) */}
+        {/* Gradient ONLY at the bottom for headline contrast — top is fully transparent so the video shines */}
         <div
           aria-hidden
-          className="absolute inset-0"
+          className="pointer-events-none absolute inset-0 z-[1]"
           style={{
             background:
-              "linear-gradient(180deg, #1a1410 0%, #2b1f17 35%, #4a2e1f 65%, #6b3a1d 100%)",
+              "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 45%, rgba(0,0,0,0.55) 90%, rgba(0,0,0,0.75) 100%)",
           }}
         />
 
-        {/* Noise overlay (CSS-generated grain, no asset needed) */}
+        {/* Solid-color fallback shown until the video loads (or if it fails).
+            Uses the same warm-dark palette as the video so the transition is seamless. */}
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 opacity-[0.12] mix-blend-overlay"
+          className="absolute inset-0 z-[-1]"
+          style={{
+            background:
+              "linear-gradient(180deg, #2b1f17 0%, #4a2e1f 60%, #6b3a1d 100%)",
+          }}
+        />
+
+        {/* Light noise grain — barely visible, just adds film texture */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 z-[2] opacity-[0.06] mix-blend-overlay"
           style={{
             backgroundImage:
               "url(\"data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")",
             backgroundSize: "200px 200px",
-          }}
-        />
-
-        {/* Subtle bottom vignette so the headline reads against bright sky */}
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/55" />
-        {/* Subtle warm tone shift to harmonize with the golden-hour video */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              "linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0.35) 100%)",
           }}
         />
 
