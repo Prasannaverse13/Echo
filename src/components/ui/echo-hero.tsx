@@ -125,9 +125,9 @@ export const EchoHero = () => {
           loop
           muted
           playsInline
-          poster=""
+          preload="auto"
           className="absolute inset-0 h-full w-full object-cover"
-          src="https://videos.pexels.com/video-files/3576378/3576378-uhd_3840_2160_25fps.mp4"
+          src="/echo-hero-clean.mp4"
         />
 
         {/* Cinematic gradient fallback (shows during video load or if it fails) */}
@@ -136,14 +136,14 @@ export const EchoHero = () => {
           className="absolute inset-0"
           style={{
             background:
-              "radial-gradient(ellipse at 30% 20%, #4c312b 0%, transparent 55%), radial-gradient(ellipse at 80% 80%, #406e7a 0%, transparent 55%), linear-gradient(135deg, #0b252a 0%, #1a3539 100%)",
+              "linear-gradient(180deg, #1a1410 0%, #2b1f17 35%, #4a2e1f 65%, #6b3a1d 100%)",
           }}
         />
 
         {/* Noise overlay (CSS-generated grain, no asset needed) */}
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 opacity-[0.18] mix-blend-overlay"
+          className="pointer-events-none absolute inset-0 opacity-[0.12] mix-blend-overlay"
           style={{
             backgroundImage:
               "url(\"data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")",
@@ -151,8 +151,17 @@ export const EchoHero = () => {
           }}
         />
 
-        {/* Vignette gradient */}
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/70" />
+        {/* Subtle bottom vignette so the headline reads against bright sky */}
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/10 via-transparent to-black/55" />
+        {/* Subtle warm tone shift to harmonize with the golden-hour video */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0.35) 100%)",
+          }}
+        />
 
         {/* Floating pill navbar — Echo's nav */}
         <nav className="absolute left-1/2 top-0 z-20 -translate-x-1/2">
@@ -244,7 +253,7 @@ export const EchoHero = () => {
           transition={{ duration: 0.8, delay: 1.0, ease: [0.16, 1, 0.3, 1] }}
           className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 hidden md:block"
         >
-          <div className="flex items-center gap-2 rounded-full bg-obsidian/70 backdrop-blur-sm border border-paper-white/15 px-3 py-1.5 text-caption text-paper-white/80">
+          <div className="flex items-center gap-2 rounded-full bg-obsidian/80 backdrop-blur-md border border-paper-white/20 px-3 py-1.5 text-caption text-paper-white/90 shadow-lg">
             <span className="w-1.5 h-1.5 rounded-full bg-slate-teal animate-pulse" />
             All Things Agentic Hackathon · 2026
           </div>
