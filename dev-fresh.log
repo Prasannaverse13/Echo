@@ -1,0 +1,13 @@
+▲ Next.js 16.3.1 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.1.2:3000
+- Environments: .env.local
+✓ Ready in 1661ms
+✓ Running next.config.ts took 241ms
+
+ POST /api/skills/reconstruct 200 in 7.7s (next.js: 898ms, application-code: 6.8s)
+ POST /api/skills/reconstruct 200 in 7.6s (next.js: 35ms, application-code: 7.5s)
+ POST /api/skills/reconstruct 200 in 14.4s (next.js: 19ms, application-code: 14.3s)
+ POST /api/agents/compose 200 in 8.7s (next.js: 102ms, application-code: 8.6s)
+ POST /api/agents/run 200 in 112ms (next.js: 87ms, application-code: 25ms)
+ POST /api/agents/run 200 in 21ms (next.js: 5ms, application-code: 16ms)

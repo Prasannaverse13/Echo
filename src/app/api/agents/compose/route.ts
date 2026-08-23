@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenAI } from "@google/genai";
 import { isGcpAvailable, writeDoc } from "@/lib/gcp";
+import { generateJson } from "@/lib/genai";
 
 /**
  * POST /api/agents/compose
@@ -12,6 +12,10 @@ import { isGcpAvailable, writeDoc } from "@/lib/gcp";
  *   - Estimated time & cost
  *
  * This is the headline "auto-compose" feature.
+ *
+ * Calls Gemini via the unified client (`@/lib/genai`) which tries Vertex
+ * AI first then AI Studio. Falls back to a heuristic mock when neither
+ * is available so the demo always works.
  *
  * When GCP is enabled, the composed agent plan is persisted to Firestore
  * (collection: `agents`) so the Agent Manager page can list it.
@@ -63,38 +67,24 @@ export async function POST(req: NextRequest) {
     { id: "slack-notifier", name: "Slack Notifier", description: "Posts notifications to Slack" },
   ];
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (apiKey) {
+  // Try Gemini via Vertex AI or AI Studio
+  const prompt = `${COMPOSE_PROMPT}\n\nGOAL: ${body.goal}\n\nSKILL LIBRARY:\n${library.map((s) => `- ${s.name}: ${s.description}`).join("\n")}`;
+  const result = await generateJson({
+    model: "gemini-2.5-flash",
+    prompt,
+    temperature: 0.3,
+  });
+  if (result?.text) {
     try {
-      const genai = new GoogleGenAI({ apiKey });
-      const response = await genai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: `${COMPOSE_PROMPT}\n\nGOAL: ${body.goal}\n\nSKILL LIBRARY:\n${library.map((s) => `- ${s.name}: ${s.description}`).join("\n")}`,
-              },
-            ],
-          },
-        ],
-        config: {
-          responseMimeType: "application/json",
-          temperature: 0.3,
-        },
-      });
-
-      const text = response.text ?? "{}";
-      const parsed = JSON.parse(text);
+      const parsed = JSON.parse(result.text);
       writeDoc(
         "agents",
         undefined,
         { goal: body.goal, ...(parsed as object) } as unknown as Record<string, unknown>
       ).catch(() => undefined);
-      return NextResponse.json({ ok: true, source: "gemini", ...parsed });
+      return NextResponse.json({ ok: true, source: result.source, ...parsed });
     } catch (err) {
-      console.error("[compose] Gemini call failed, falling back to mock:", err);
+      console.error("[compose] Gemini response parse failed, falling back to mock:", err);
     }
   }
 

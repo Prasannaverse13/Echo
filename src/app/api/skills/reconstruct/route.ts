@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenAI } from "@google/genai";
 import { isGcpAvailable, writeDoc } from "@/lib/gcp";
+import { generateJson } from "@/lib/genai";
 
 /**
  * POST /api/skills/reconstruct
@@ -11,9 +11,10 @@ import { isGcpAvailable, writeDoc } from "@/lib/gcp";
  * (multipart/form-data). For the hackathon demo, we synthesize a realistic
  * skill structure that Echo would have extracted from screen capture frames.
  *
- * If GEMINI_API_KEY is set, this route calls Gemini 3.5 Flash to generate a
- * skill from a brief workflow description. Otherwise it returns a mock that
- * still demonstrates the full product flow end-to-end.
+ * Calls Gemini via the unified client (`@/lib/genai`) which tries Vertex
+ * AI first (uses the GCP project's billing) then AI Studio (uses the
+ * API key). Falls back to a mock when neither is available so the demo
+ * always works.
  *
  * When GCP is enabled, the reconstructed skill is persisted to Firestore
  * (collection: `skills`) so the Composer and Skill Library pages can read
@@ -50,40 +51,25 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const { frameCount = 24, durationSec = 64 } = body;
 
-  // Try Gemini first if a key is configured
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (apiKey) {
+  // Try Gemini via Vertex AI (uses GCP billing) or AI Studio (uses API key)
+  const prompt = `${RECONSTRUCTION_PROMPT}\n\nThe recording captured ${frameCount} frames over ${durationSec} seconds. The user demonstrated a workflow on their screen.`;
+  const result = await generateJson({
+    model: "gemini-2.5-flash",
+    prompt,
+    temperature: 0.4,
+  });
+  if (result?.text) {
     try {
-      const genai = new GoogleGenAI({ apiKey });
-      const response = await genai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: `${RECONSTRUCTION_PROMPT}\n\nThe recording captured ${frameCount} frames over ${durationSec} seconds. The user demonstrated a workflow on their screen.`,
-              },
-            ],
-          },
-        ],
-        config: {
-          responseMimeType: "application/json",
-          temperature: 0.4,
-        },
-      });
-
-      const text = response.text ?? "{}";
-      const parsed = JSON.parse(text) as ReconstructedSkill;
+      const parsed = JSON.parse(result.text) as ReconstructedSkill;
       // Best-effort persist to Firestore (non-blocking)
       writeDoc(
         "skills",
         undefined,
         parsed as unknown as Record<string, unknown>
       ).catch(() => undefined);
-      return NextResponse.json({ ok: true, source: "gemini", ...parsed });
+      return NextResponse.json({ ok: true, source: result.source, ...parsed });
     } catch (err) {
-      console.error("[reconstruct] Gemini call failed, falling back to mock:", err);
+      console.error("[reconstruct] Gemini response parse failed, falling back to mock:", err);
     }
   }
 

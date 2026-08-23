@@ -35,6 +35,11 @@ yarn-error.log*
 !.env.local.example
 !.env.example
 
+# dev server logs (regenerated on every run)
+dev-fresh.log
+dev-fresh.log.err
+start-dev.bat
+
 # vercel
 .vercel
 

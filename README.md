@@ -21,7 +21,7 @@ The headline: a single recording becomes a reusable worker that handles 10s–10
 
 | Requirement | Echo |
 |---|---|
-| Gemini 3.5+ (Flash or Pro) | `gemini-2.5-flash` via `@google/genai` for the API routes, `gemini-2.5-flash` via `@google-cloud/vertexai` inside the ADK agent |
+| Gemini 2.5+ (Flash) | `gemini-2.5-flash` via `@google/genai` for the API routes, `gemini-2.5-flash` via `@google-cloud/vertexai` inside the ADK agent |
 | Google ADK / GenAI / Antigravity / GenKit | Google ADK-style `LlmAgent` in `src/lib/agents/echo-agent.ts` (Gemini + tool-calling loop), uses `@google/genai` for HTTP routes and `@google-cloud/vertexai` for the agent |
 | ≥ 1 Google Cloud infra service | **4** wired: Cloud Firestore (`skills`/`agents`/`runs` collections), Cloud Pub/Sub (`echo-runs` topic), Vertex AI (ADK agent), Cloud Run (multi-stage Dockerfile + `cloudbuild.yaml`) |
 | Working webapp | Next.js 16 (App Router) + React 19 + Tailwind v4 — 17 pages, real screen capture, real API routes, all 200 OK |
