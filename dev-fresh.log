@@ -2,17 +2,26 @@
 - Local:         http://localhost:3000
 - Network:       http://192.168.1.2:3000
 - Environments: .env.local
-✓ Ready in 1368ms
-✓ Running next.config.ts took 86ms
+✓ Ready in 1964ms
+✓ Running next.config.ts took 239ms
 
- POST /api/skills/reconstruct 200 in 14.9s (next.js: 732ms, application-code: 14.1s)
- POST /api/skills/reconstruct 200 in 7.4s (next.js: 11ms, application-code: 7.4s)
- POST /api/agents/compose 200 in 4.8s (next.js: 60ms, application-code: 4.7s)
- POST /api/agents/compose 200 in 3.9s (next.js: 8ms, application-code: 3.9s)
- POST /api/agents/run 200 in 91ms (next.js: 69ms, application-code: 21ms)
- POST /api/agents/run 200 in 22ms (next.js: 5ms, application-code: 16ms)
- GET /api/agents/run?id=run_1787475642833_ww54js 200 in 14ms (next.js: 6ms, application-code: 8ms)
- POST /api/agents/compose 400 in 12ms (next.js: 5ms, application-code: 7ms)
- POST /api/agents/run 400 in 16ms (next.js: 7ms, application-code: 9ms)
+ POST /api/skills/reconstruct 200 in 7.9s (next.js: 905ms, application-code: 7.0s)
+ POST /api/skills/reconstruct 200 in 5.7s (next.js: 20ms, application-code: 5.6s)
+ POST /api/agents/compose 200 in 3.1s (next.js: 104ms, application-code: 3.0s)
+ POST /api/agents/compose 200 in 2.9s (next.js: 7ms, application-code: 2.9s)
+ POST /api/agents/run 200 in 91ms (next.js: 73ms, application-code: 18ms)
+ POST /api/agents/run 200 in 108ms (next.js: 92ms, application-code: 15ms)
+ GET /api/agents/run?id=run_1787476574850_281axp 200 in 15ms (next.js: 6ms, application-code: 10ms)
+ POST /api/agents/compose 400 in 14ms (next.js: 4ms, application-code: 10ms)
+ POST /api/agents/run 400 in 17ms (next.js: 8ms, application-code: 10ms)
  GET /api/agents/run 400 in 12ms (next.js: 4ms, application-code: 8ms)
- POST /api/skills/reconstruct 200 in 12.0s (next.js: 28ms, application-code: 12.0s)
+ POST /api/skills/reconstruct 200 in 6.2s (next.js: 100ms, application-code: 6.1s)
+ POST /api/skills/reconstruct 200 in 6.1s (next.js: 13ms, application-code: 6.1s)
+ POST /api/agents/compose 200 in 4.0s (next.js: 28ms, application-code: 4.0s)
+ POST /api/agents/compose 200 in 2.5s (next.js: 8ms, application-code: 2.5s)
+ POST /api/agents/run 200 in 33ms (next.js: 12ms, application-code: 21ms)
+ POST /api/agents/run 200 in 36ms (next.js: 19ms, application-code: 17ms)
+ GET /api/agents/run?id=run_1787476879086_tn772v 200 in 9ms (next.js: 4ms, application-code: 5ms)
+ POST /api/agents/compose 400 in 16ms (next.js: 9ms, application-code: 7ms)
+ POST /api/agents/run 400 in 16ms (next.js: 11ms, application-code: 5ms)
+ GET /api/agents/run 400 in 7ms (next.js: 3ms, application-code: 4ms)

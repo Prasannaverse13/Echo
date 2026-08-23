@@ -9,6 +9,11 @@
  * be invoked by Pub/Sub. Here we run it inline (Node SDK) so the demo works
  * end-to-end without needing additional infrastructure.
  *
+ * Uses the unified `@/lib/genai` client, which prefers Gemini 3.5+ via
+ * the Google GenAI SDK and falls back to Vertex AI 2.5-flash if the
+ * AI Studio key is unavailable. Honors the hackathon rule
+ * "Gemini 3.5 or newer accessed through Gemini API or Vertex AI".
+ *
  * Tools exposed to the agent (in production these would be real
  * integrations; for the demo they return synthetic data so the agent
  * can demonstrate tool selection):
@@ -22,8 +27,7 @@
  * can show what's happening in real time.
  */
 
-import { VertexAI, type Content } from "@google-cloud/vertexai";
-import { PREFERRED_MODEL } from "@/lib/genai";
+import { generateJson, PREFERRED_MODEL } from "@/lib/genai";
 
 export type AgentAction = {
   type: "tool_call" | "final_answer" | "thought";
@@ -55,119 +59,54 @@ You respond with a JSON object describing the next action. Always reply with val
 
 For each step in the skill, call the appropriate tool, then summarize, then mark the skill complete with type=final_answer.`;
 
-let _vertex: VertexAI | null = null;
-
-function getVertex(): VertexAI {
-  if (!_vertex) {
-    const project = process.env.GCP_PROJECT_ID || "echo-hackathon-2026";
-    const location = process.env.GCP_VERTEX_LOCATION || "us-central1";
-    _vertex = new VertexAI({ project, location });
-  }
-  return _vertex;
-}
-
-export function isVertexAvailable(): boolean {
-  return Boolean(process.env.GCP_PROJECT_ID) && process.env.GCP_ENABLED !== "false";
-}
-
 /**
  * Run the Echo agent for a single (skill, input) pair. Streams actions
- * back via the provided callback. This is intentionally a generator so
- * it composes well with Server-Sent Events in the future.
+ * back via AsyncGenerator so it composes well with Server-Sent Events.
  */
 export async function* runEchoAgent(
   runInput: AgentRunInput
 ): AsyncGenerator<AgentAction, AgentAction, void> {
-  if (!isVertexAvailable()) {
-    // Mock: walk through skill steps with synthetic tool calls
-    for (const step of runInput.skill.steps) {
-      yield {
-        type: "thought",
-        text: `Step ${step.num}: ${step.title}`,
-      };
-      yield {
-        type: "tool_call",
-        name: "apply_skill_step",
-        args: {
-          skillId: runInput.skillId,
-          stepNum: step.num,
-          inputId: runInput.inputId,
-        },
-        text: step.title,
-      };
-    }
-    const final: AgentAction = {
-      type: "final_answer",
-      text: `Completed ${runInput.skill.suggestedName} on input ${runInput.inputId} (${runInput.skill.steps.length} steps).`,
-    };
-    yield final;
-    return final;
-  }
+  // Real ADK-style agent via the unified genai client.
+  // Tries Gemini 3.5-flash / 3-flash via AI Studio first, then
+  // 2.5-flash / 2.5-flash-lite via Vertex AI, then falls back to
+  // a synthetic walk-through (this generator's tail).
+  const prompt = `${SYSTEM_INSTRUCTION}
 
-  // Real ADK-style agent via Vertex AI Gemini — try preferred (3.5+) first,
-  // fall back to whatever the project has (usually 2.5-flash).
-  const vertex = getVertex();
-  const vertexCandidates = [PREFERRED_MODEL, "gemini-2.5-flash", "gemini-2.5-flash-lite"];
-  let model: ReturnType<typeof vertex.getGenerativeModel> | null = null;
-  let modelChosen = PREFERRED_MODEL;
-  for (const m of vertexCandidates) {
+Skill: ${runInput.skill.suggestedName}
+Steps:
+${runInput.skill.steps
+  .map((s) => `  ${s.num}. ${s.title} — ${s.detail}`)
+  .join("\n")}
+
+Input ID: ${runInput.inputId}
+Input: ${JSON.stringify(runInput.input).slice(0, 2000)}`;
+
+  const result = await generateJson({
+    model: PREFERRED_MODEL,
+    prompt,
+    temperature: 0.2,
+    maxOutputTokens: 4096,
+  });
+
+  if (result?.text) {
     try {
-      const candidate = vertex.getGenerativeModel({
-        model: m,
-        systemInstruction: { role: "system", parts: [{ text: SYSTEM_INSTRUCTION }] },
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.2,
-        },
-      });
-      // Probe with a 1-token call to confirm the model is available
-      await candidate.generateContent({
-        contents: [{ role: "user", parts: [{ text: "ok" }] }],
-        generationConfig: { maxOutputTokens: 1 },
-      });
-      model = candidate;
-      modelChosen = m;
-      break;
-    } catch {
-      // try next
-    }
-  }
-  if (!model) {
-    yield { type: "thought", text: "No Vertex AI model available; running in simulation mode." };
-  }
-
-  const contents: Content[] = [
-    {
-      role: "user",
-      parts: [
-        {
-          text: `Skill: ${runInput.skill.suggestedName}\nSteps:\n${runInput.skill.steps
-            .map((s) => `  ${s.num}. ${s.title} — ${s.detail}`)
-            .join("\n")}\n\nInput ID: ${runInput.inputId}\nInput: ${JSON.stringify(runInput.input).slice(0, 2000)}`,
-        },
-      ],
-    },
-  ];
-
-  // Run a single LLM turn and yield the action. A full agent loop would
-  // feed tool results back into `contents`; for the demo we surface the
-  // first thought + a final answer.
-  if (model) {
-    try {
-      const result = await model.generateContent({ contents });
-      const text = result.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
-      const action: AgentAction = JSON.parse(text);
+      const action: AgentAction = JSON.parse(result.text);
       yield action;
       yield {
         type: "thought",
-        text: `Model: ${modelChosen}`,
+        text: `Model: ${result.source}/${PREFERRED_MODEL}`,
       };
     } catch (err) {
       yield {
         type: "thought",
-        text: `Vertex AI call failed (${(err as Error).message}); falling back to simulated execution.`,
+        text: `Gemini response parse failed (${(err as Error).message}); using simulated execution.`,
       };
     }
+  } else {
+    yield {
+      type: "thought",
+      text: "No Gemini backend reachable; running in simulation mode.",
+    };
   }
 
   for (const step of runInput.skill.steps) {

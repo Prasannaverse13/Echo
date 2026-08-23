@@ -1,15 +1,1 @@
 $ next dev
-The VertexAI class and all its dependencies are deprecated as of June 24, 2025 and will be removed on June 24, 2026. Please use the Google Gen AI SDK (https://www.npmjs.com/package/@google/genai) to access Gemini features. For details, see https://cloud.google.com/vertex-ai/generative-ai/docs/deprecations/genai-vertexai-sdk.
-[genai] aistudio/gemini-3.5-flash failed: {"error":{"code":429,"message":"Your prepayment credits are depleted. Please go to AI Studio at https://ai.studio/projec
-[genai] aistudio/gemini-3-flash failed: {"error":{"code":404,"message":"models/gemini-3-flash is not found for API version v1beta, or is not supported for gener
-The VertexAI class and all its dependencies are deprecated as of June 24, 2025 and will be removed on June 24, 2026. Please use the Google Gen AI SDK (https://www.npmjs.com/package/@google/genai) to access Gemini features. For details, see https://cloud.google.com/vertex-ai/generative-ai/docs/deprecations/genai-vertexai-sdk.
-[reconstruct] Gemini response parse failed, falling back to mock: SyntaxError: Expected ',' or ']' after array element in JSON at position 1644 (line 36 column 3)
-    at JSON.parse (<anonymous>)
-    at POST (src\app\api\skills\reconstruct\route.ts:63:27)
-  61 |   if (result?.text) {
-  62 |     try {
-> 63 |       const parsed = JSON.parse(result.text) as ReconstructedSkill;
-     |                           ^
-  64 |       // Best-effort persist to Firestore (non-blocking)
-  65 |       writeDoc(
-  66 |         "skills",

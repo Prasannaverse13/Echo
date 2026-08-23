@@ -3,7 +3,8 @@
  * Run with: pnpm exec tsx scripts/smoke-agent.ts
  */
 
-import { runEchoAgent, isVertexAvailable, type AgentAction } from "../src/lib/agents/echo-agent";
+import { runEchoAgent, type AgentAction } from "../src/lib/agents/echo-agent";
+import { isGcpAvailable } from "../src/lib/gcp";
 
 const input = {
   runId: "smoke-test-1",
@@ -21,7 +22,7 @@ const input = {
 
 (async () => {
   console.log("=== Echo ADK agent smoke test ===\n");
-  console.log("isVertexAvailable:", isVertexAvailable());
+  console.log("isGcpAvailable:", isGcpAvailable());
   console.log("GCP_PROJECT_ID:", process.env.GCP_PROJECT_ID);
   console.log();
 
