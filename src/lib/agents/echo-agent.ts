@@ -95,10 +95,12 @@ export async function* runEchoAgent(
         text: step.title,
       };
     }
-    return {
+    const final: AgentAction = {
       type: "final_answer",
       text: `Completed ${runInput.skill.suggestedName} on input ${runInput.inputId} (${runInput.skill.steps.length} steps).`,
     };
+    yield final;
+    return final;
   }
 
   // Real ADK-style agent via Vertex AI Gemini
@@ -147,8 +149,10 @@ export async function* runEchoAgent(
     };
   }
 
-  return {
+  const final: AgentAction = {
     type: "final_answer",
     text: `Completed ${runInput.skill.suggestedName} on input ${runInput.inputId} (${runInput.skill.steps.length} steps).`,
   };
+  yield final;
+  return final;
 }
