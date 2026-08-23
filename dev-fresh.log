@@ -5,3 +5,14 @@
 ✓ Ready in 1368ms
 ✓ Running next.config.ts took 86ms
 
+ POST /api/skills/reconstruct 200 in 14.9s (next.js: 732ms, application-code: 14.1s)
+ POST /api/skills/reconstruct 200 in 7.4s (next.js: 11ms, application-code: 7.4s)
+ POST /api/agents/compose 200 in 4.8s (next.js: 60ms, application-code: 4.7s)
+ POST /api/agents/compose 200 in 3.9s (next.js: 8ms, application-code: 3.9s)
+ POST /api/agents/run 200 in 91ms (next.js: 69ms, application-code: 21ms)
+ POST /api/agents/run 200 in 22ms (next.js: 5ms, application-code: 16ms)
+ GET /api/agents/run?id=run_1787475642833_ww54js 200 in 14ms (next.js: 6ms, application-code: 8ms)
+ POST /api/agents/compose 400 in 12ms (next.js: 5ms, application-code: 7ms)
+ POST /api/agents/run 400 in 16ms (next.js: 7ms, application-code: 9ms)
+ GET /api/agents/run 400 in 12ms (next.js: 4ms, application-code: 8ms)
+ POST /api/skills/reconstruct 200 in 12.0s (next.js: 28ms, application-code: 12.0s)

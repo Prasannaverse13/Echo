@@ -23,6 +23,7 @@
  */
 
 import { VertexAI, type Content } from "@google-cloud/vertexai";
+import { PREFERRED_MODEL } from "@/lib/genai";
 
 export type AgentAction = {
   type: "tool_call" | "final_answer" | "thought";
@@ -103,16 +104,37 @@ export async function* runEchoAgent(
     return final;
   }
 
-  // Real ADK-style agent via Vertex AI Gemini
+  // Real ADK-style agent via Vertex AI Gemini — try preferred (3.5+) first,
+  // fall back to whatever the project has (usually 2.5-flash).
   const vertex = getVertex();
-  const model = vertex.getGenerativeModel({
-    model: "gemini-2.5-flash",
-    systemInstruction: { role: "system", parts: [{ text: SYSTEM_INSTRUCTION }] },
-    generationConfig: {
-      responseMimeType: "application/json",
-      temperature: 0.2,
-    },
-  });
+  const vertexCandidates = [PREFERRED_MODEL, "gemini-2.5-flash", "gemini-2.5-flash-lite"];
+  let model: ReturnType<typeof vertex.getGenerativeModel> | null = null;
+  let modelChosen = PREFERRED_MODEL;
+  for (const m of vertexCandidates) {
+    try {
+      const candidate = vertex.getGenerativeModel({
+        model: m,
+        systemInstruction: { role: "system", parts: [{ text: SYSTEM_INSTRUCTION }] },
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.2,
+        },
+      });
+      // Probe with a 1-token call to confirm the model is available
+      await candidate.generateContent({
+        contents: [{ role: "user", parts: [{ text: "ok" }] }],
+        generationConfig: { maxOutputTokens: 1 },
+      });
+      model = candidate;
+      modelChosen = m;
+      break;
+    } catch {
+      // try next
+    }
+  }
+  if (!model) {
+    yield { type: "thought", text: "No Vertex AI model available; running in simulation mode." };
+  }
 
   const contents: Content[] = [
     {
@@ -130,16 +152,22 @@ export async function* runEchoAgent(
   // Run a single LLM turn and yield the action. A full agent loop would
   // feed tool results back into `contents`; for the demo we surface the
   // first thought + a final answer.
-  try {
-    const result = await model.generateContent({ contents });
-    const text = result.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
-    const action: AgentAction = JSON.parse(text);
-    yield action;
-  } catch (err) {
-    yield {
-      type: "thought",
-      text: `Vertex AI call failed (${(err as Error).message}); falling back to simulated execution.`,
-    };
+  if (model) {
+    try {
+      const result = await model.generateContent({ contents });
+      const text = result.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+      const action: AgentAction = JSON.parse(text);
+      yield action;
+      yield {
+        type: "thought",
+        text: `Model: ${modelChosen}`,
+      };
+    } catch (err) {
+      yield {
+        type: "thought",
+        text: `Vertex AI call failed (${(err as Error).message}); falling back to simulated execution.`,
+      };
+    }
   }
 
   for (const step of runInput.skill.steps) {

@@ -18,7 +18,7 @@ flowchart TB
 
     subgraph GCP["Google Cloud"]
         Vision[Gemini 3.5 Flash<br/>via Vertex AI]
-        ADK[Echo ADK Agent<br/>gemini-2.5-flash]
+        ADK[Echo ADK Agent<br/>gemini-3.5-flash]
         FS[(Firestore<br/>skills · agents · runs)]
         PS[Pub/Sub<br/>echo-runs topic]
     end
