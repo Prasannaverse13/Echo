@@ -117,3 +117,6 @@
  GET /runs 200 in 80ms (next.js: 36ms, application-code: 45ms)
  GET /logs 200 in 61ms (next.js: 29ms, application-code: 32ms)
  GET /integrations 200 in 136ms (next.js: 51ms, application-code: 85ms)
+ GET /integrations 200 in 1437ms (next.js: 499ms, application-code: 938ms)
+ GET /integrations 200 in 515ms (next.js: 63ms, application-code: 452ms)
+ GET /integrations 200 in 311ms (next.js: 49ms, application-code: 262ms)
