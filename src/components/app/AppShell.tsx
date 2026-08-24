@@ -2,44 +2,57 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { FeatureTag } from "@/components/ui";
+import { logout, type Session } from "@/lib/auth/auth";
 
 const navSections = [
   {
     title: "Workspace",
     items: [
-      { label: "Dashboard", href: "/app", icon: "▣" },
-      { label: "Skills", href: "/app/skills", icon: "✦" },
-      { label: "Agents", href: "/app/agents", icon: "◈" },
+      { label: "Dashboard", href: "/dashboard", icon: "▣" },
+      { label: "Skills", href: "/skills", icon: "✦" },
+      { label: "Agents", href: "/agents", icon: "◈" },
     ],
   },
   {
     title: "Build",
     items: [
-      { label: "Record", href: "/app/record", icon: "◉" },
-      { label: "Composer", href: "/app/compose", icon: "❖" },
-      { label: "Triggers", href: "/app/triggers", icon: "◇" },
+      { label: "Record", href: "/record", icon: "◉" },
+      { label: "Composer", href: "/compose", icon: "❖" },
+      { label: "Triggers", href: "/triggers", icon: "◇" },
     ],
   },
   {
     title: "Operate",
     items: [
-      { label: "Runs", href: "/app/runs", icon: "▷" },
-      { label: "Logs", href: "/app/logs", icon: "≡" },
-      { label: "Integrations", href: "/app/integrations", icon: "⬡" },
+      { label: "Runs", href: "/runs", icon: "▷" },
+      { label: "Logs", href: "/logs", icon: "≡" },
+      { label: "Integrations", href: "/integrations", icon: "⬡" },
     ],
   },
   {
     title: "Account",
     items: [
-      { label: "Settings", href: "/app/settings", icon: "⚙" },
+      { label: "Settings", href: "/settings", icon: "⚙" },
     ],
   },
 ];
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  session,
+  children,
+}: {
+  session: Session;
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  function onLogout() {
+    logout();
+    router.push("/");
+  }
 
   return (
     <div className="min-h-screen flex bg-bone">
@@ -53,7 +66,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             Echo
           </Link>
           <p className="text-caption text-obsidian/50 mt-1">
-            Personal workspace
+            {session.name}
           </p>
         </div>
 
@@ -66,8 +79,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <ul className="space-y-1 w-full">
                 {section.items.map((item) => {
                   const isActive =
-                    item.href === "/app"
-                      ? pathname === "/app"
+                    item.href === "/dashboard"
+                      ? pathname === "/dashboard"
                       : pathname.startsWith(item.href);
                   return (
                     <li key={item.href}>
@@ -103,12 +116,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="mt-2 h-1.5 bg-iron rounded-full overflow-hidden">
               <div className="h-full w-3/5 bg-obsidian rounded-full" />
             </div>
-            <Link
-              href="/pricing"
+            <button
+              type="button"
+              onClick={onLogout}
               className="text-caption font-medium text-obsidian underline-offset-4 hover:underline mt-3 inline-block"
             >
-              Upgrade →
-            </Link>
+              Log out →
+            </button>
           </div>
         </div>
       </aside>

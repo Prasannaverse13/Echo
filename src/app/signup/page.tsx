@@ -1,7 +1,44 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button, NavBar, Footer, FeatureTag } from "@/components/ui";
+import { PasswordInput } from "@/components/ui/PasswordInput";
+import { signup, getSession } from "@/lib/auth/auth";
 
 export default function SignupPage() {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (getSession()) router.replace("/dashboard");
+  }, [router]);
+
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    setError(null);
+    if (!name.trim() || !email.trim() || !password) {
+      setError("Please fill in your name, email, and password.");
+      return;
+    }
+    setBusy(true);
+    window.setTimeout(() => {
+      const result = signup(name, email, password);
+      setBusy(false);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      router.replace("/dashboard");
+    }, 250);
+  }
+
   return (
     <>
       <NavBar />
@@ -18,42 +55,80 @@ export default function SignupPage() {
               60 seconds to set up. No credit card required.
             </p>
 
-            <form className="mt-10 space-y-4">
+            {error && (
+              <div
+                className="mt-6 px-4 py-3 rounded-2xl border border-desert-clay bg-desert-clay/30 text-body-sm text-obsidian"
+                role="alert"
+              >
+                {error}
+              </div>
+            )}
+
+            <form className="mt-8 space-y-4" onSubmit={onSubmit} noValidate>
               <div>
-                <label className="text-caption font-medium text-obsidian block mb-2">
+                <label
+                  htmlFor="name"
+                  className="text-caption font-medium text-obsidian block mb-2"
+                >
                   Full name
                 </label>
                 <input
+                  id="name"
                   type="text"
+                  name="name"
+                  autoComplete="name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                   placeholder="Ada Lovelace"
-                  className="w-full px-4 py-3 rounded-full border border-iron bg-paper-white text-body-sm focus:outline-none focus:border-obsidian transition-colors"
+                  disabled={busy}
+                  className="w-full px-4 py-3 rounded-full border border-iron bg-paper-white text-body-sm focus:outline-none focus:border-obsidian transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
               <div>
-                <label className="text-caption font-medium text-obsidian block mb-2">
+                <label
+                  htmlFor="email"
+                  className="text-caption font-medium text-obsidian block mb-2"
+                >
                   Work email
                 </label>
                 <input
+                  id="email"
                   type="email"
+                  name="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@company.com"
-                  className="w-full px-4 py-3 rounded-full border border-iron bg-paper-white text-body-sm focus:outline-none focus:border-obsidian transition-colors"
+                  disabled={busy}
+                  className="w-full px-4 py-3 rounded-full border border-iron bg-paper-white text-body-sm focus:outline-none focus:border-obsidian transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
               <div>
-                <label className="text-caption font-medium text-obsidian block mb-2">
+                <label
+                  htmlFor="password"
+                  className="text-caption font-medium text-obsidian block mb-2"
+                >
                   Password
                 </label>
-                <input
-                  type="password"
-                  placeholder="••••••••"
-                  className="w-full px-4 py-3 rounded-full border border-iron bg-paper-white text-body-sm focus:outline-none focus:border-obsidian transition-colors"
+                <PasswordInput
+                  value={password}
+                  onChange={setPassword}
+                  autoComplete="new-password"
+                  name="password"
+                  disabled={busy}
                 />
                 <p className="mt-2 text-caption text-obsidian/50">
                   At least 8 characters with one number.
                 </p>
               </div>
-              <Button variant="light" size="lg" className="w-full">
-                Create my Echo →
+              <Button
+                variant="light"
+                size="lg"
+                type="submit"
+                className="w-full"
+                disabled={busy}
+              >
+                {busy ? "Creating your Echo…" : "Create my Echo →"}
               </Button>
             </form>
 

@@ -1,7 +1,80 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button, NavBar, Footer, FeatureTag } from "@/components/ui";
+import { PasswordInput } from "@/components/ui/PasswordInput";
+import {
+  login,
+  getSession,
+  getLoginAttemptInfo,
+  type LoginResult,
+} from "@/lib/auth/auth";
 
 export default function LoginPage() {
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [attemptsLeft, setAttemptsLeft] = useState<number>(3);
+  const [busy, setBusy] = useState(false);
+
+  // If already signed in, jump to dashboard.
+  useEffect(() => {
+    if (getSession()) router.replace("/dashboard");
+  }, [router]);
+
+  // Show attempts remaining banner on mount and after each attempt.
+  useEffect(() => {
+    const a = getLoginAttemptInfo();
+    if (a.attemptsLeft < 3) setAttemptsLeft(a.attemptsLeft);
+  }, []);
+
+  // Disable form for the remainder of the lockout window if currently locked.
+  const [lockedUntil, setLockedUntil] = useState<number>(0);
+  useEffect(() => {
+    const a = getLoginAttemptInfo();
+    setLockedUntil(a.lockedUntil);
+  }, [attemptsLeft]);
+  const isLocked = lockedUntil > Date.now();
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!isLocked) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [isLocked]);
+  const secondsLeft = isLocked
+    ? Math.max(0, Math.ceil((lockedUntil - now) / 1000))
+    : 0;
+
+  function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (busy) return;
+    setError(null);
+    setInfo(null);
+    if (!email.trim() || !password) {
+      setError("Please enter your email and password.");
+      return;
+    }
+    setBusy(true);
+    // Micro-delay so the busy state is visible even on fast machines.
+    window.setTimeout(() => {
+      const result: LoginResult = login(email, password);
+      setBusy(false);
+      if (result.ok) {
+        setAttemptsLeft(3);
+        router.replace("/dashboard");
+        return;
+      }
+      setError(result.error);
+      setAttemptsLeft(result.attemptsLeft);
+      const updated = getLoginAttemptInfo();
+      setLockedUntil(updated.lockedUntil);
+    }, 250);
+  }
+
   return (
     <>
       <NavBar />
@@ -18,44 +91,79 @@ export default function LoginPage() {
               Your skills are waiting.
             </p>
 
-            <div className="mt-10 space-y-3">
-              <Button variant="outline-light" size="lg" className="w-full">
-                <GoogleIcon /> Continue with Google
-              </Button>
-              <Button variant="outline-light" size="lg" className="w-full">
-                <GitHubIcon /> Continue with GitHub
-              </Button>
-            </div>
+            {info && (
+              <div
+                className="mt-6 px-4 py-3 rounded-2xl border border-mist-mint bg-mist-mint/30 text-body-sm text-obsidian"
+                role="status"
+              >
+                {info}
+              </div>
+            )}
+            {error && (
+              <div
+                className="mt-6 px-4 py-3 rounded-2xl border border-desert-clay bg-desert-clay/30 text-body-sm text-obsidian"
+                role="alert"
+              >
+                {error}
+              </div>
+            )}
+            {isLocked && (
+              <div
+                className="mt-3 px-4 py-3 rounded-2xl border border-obsidian/20 bg-iron/40 text-body-sm text-obsidian"
+                role="alert"
+              >
+                Too many failed attempts. Try again in {secondsLeft}s.
+              </div>
+            )}
 
-            <div className="my-8 flex items-center gap-4">
-              <div className="flex-1 h-px bg-iron" />
-              <span className="text-caption text-obsidian/50">or</span>
-              <div className="flex-1 h-px bg-iron" />
-            </div>
-
-            <form className="space-y-4">
+            <form className="mt-8 space-y-4" onSubmit={onSubmit} noValidate>
               <div>
-                <label className="text-caption font-medium text-obsidian block mb-2">
+                <label
+                  htmlFor="email"
+                  className="text-caption font-medium text-obsidian block mb-2"
+                >
                   Email
                 </label>
                 <input
+                  id="email"
                   type="email"
+                  name="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@company.com"
-                  className="w-full px-4 py-3 rounded-full border border-iron bg-paper-white text-body-sm focus:outline-none focus:border-obsidian transition-colors"
+                  disabled={busy || isLocked}
+                  className="w-full px-4 py-3 rounded-full border border-iron bg-paper-white text-body-sm focus:outline-none focus:border-obsidian transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 />
               </div>
               <div>
-                <label className="text-caption font-medium text-obsidian block mb-2">
+                <label
+                  htmlFor="password"
+                  className="text-caption font-medium text-obsidian block mb-2"
+                >
                   Password
                 </label>
-                <input
-                  type="password"
-                  placeholder="••••••••"
-                  className="w-full px-4 py-3 rounded-full border border-iron bg-paper-white text-body-sm focus:outline-none focus:border-obsidian transition-colors"
+                <PasswordInput
+                  value={password}
+                  onChange={setPassword}
+                  autoComplete="current-password"
+                  name="password"
+                  disabled={busy || isLocked}
                 />
+                {attemptsLeft < 3 && !isLocked && (
+                  <p className="mt-2 text-caption text-obsidian/60">
+                    {attemptsLeft} attempt{attemptsLeft === 1 ? "" : "s"} left.
+                  </p>
+                )}
               </div>
-              <Button variant="light" size="lg" className="w-full">
-                Sign in →
+              <Button
+                variant="light"
+                size="lg"
+                type="submit"
+                className="w-full"
+                disabled={busy || isLocked}
+              >
+                {busy ? "Signing in…" : "Sign in →"}
               </Button>
             </form>
 
@@ -73,22 +181,5 @@ export default function LoginPage() {
       </main>
       <Footer />
     </>
-  );
-}
-
-function GoogleIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-      <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-    </svg>
-  );
-}
-
-function GitHubIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56v-2c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.47.11-3.06 0 0 .97-.31 3.18 1.18a11.1 11.1 0 0 1 5.79 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.77.11 3.06.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.41-5.27 5.69.41.36.78 1.06.78 2.14v3.18c0 .31.21.67.8.55C20.21 21.38 23.5 17.07 23.5 12 23.5 5.65 18.35.5 12 .5z" />
-    </svg>
   );
 }

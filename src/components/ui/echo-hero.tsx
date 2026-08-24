@@ -99,9 +99,9 @@ export const WordsPullUpMultiStyle = ({
 
 /* ---------------- Nav links for Echo ---------------- */
 const navItems = [
-  { label: "Skills", href: "/app/skills" },
-  { label: "Agents", href: "/app/agents" },
-  { label: "Composer", href: "/app/compose" },
+  { label: "Skills", href: "/skills" },
+  { label: "Agents", href: "/agents" },
+  { label: "Composer", href: "/compose" },
   { label: "Pricing", href: "/pricing" },
   { label: "Sign in", href: "/login" },
 ];
@@ -162,29 +162,41 @@ export const EchoHero = () => {
           }}
         />
 
-        {/* Floating pill navbar — Echo's nav */}
-        <nav className="absolute left-1/2 top-0 z-20 -translate-x-1/2">
-          <div className="flex items-center gap-3 rounded-b-2xl bg-obsidian/90 backdrop-blur-md px-4 py-2 sm:gap-6 md:gap-12 md:rounded-b-3xl md:px-8 lg:gap-14 border-b border-paper-white/10">
+        {/* Floating liquid-glass pill navbar — Echo's nav */}
+        <nav className="absolute left-1/2 top-4 sm:top-6 z-20 -translate-x-1/2 w-[min(92%,1100px)]">
+          <div
+            className="flex items-center justify-between gap-3 sm:gap-6 rounded-full border border-paper-white/25 px-4 py-2 sm:px-6 sm:py-2.5"
+            style={{
+              background:
+                "linear-gradient(135deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.10) 100%)",
+              backdropFilter: "blur(24px) saturate(180%)",
+              WebkitBackdropFilter: "blur(24px) saturate(180%)",
+              boxShadow:
+                "0 8px 32px 0 rgba(0,0,0,0.18), inset 0 1px 0 0 rgba(255,255,255,0.25)",
+            }}
+          >
             <span
-              className="font-bold tracking-[-0.045em] text-base md:text-lg"
-              style={{ color: "#F6F5F5" }}
+              className="font-bold tracking-[-0.045em] text-base md:text-lg shrink-0"
+              style={{ color: "#FFFFFF" }}
             >
               Echo
             </span>
-            {navItems.map((item) => (
-              <a
-                key={item.label}
-                href={item.href}
-                className="text-[10px] transition-colors sm:text-xs md:text-sm"
-                style={{ color: "rgba(246, 245, 245, 0.7)" }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = "#F6F5F5")}
-                onMouseLeave={(e) =>
-                  (e.currentTarget.style.color = "rgba(246, 245, 245, 0.7)")
-                }
-              >
-                {item.label}
-              </a>
-            ))}
+            <div className="flex items-center gap-3 sm:gap-5 md:gap-7 overflow-x-auto">
+              {navItems.map((item) => (
+                <a
+                  key={item.label}
+                  href={item.href}
+                  className="text-[10px] sm:text-xs md:text-sm font-medium transition-colors whitespace-nowrap"
+                  style={{ color: "rgba(255, 255, 255, 0.78)" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = "#FFFFFF")}
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.color = "rgba(255, 255, 255, 0.78)")
+                  }
+                >
+                  {item.label}
+                </a>
+              ))}
+            </div>
           </div>
         </nav>
 
@@ -206,7 +218,7 @@ export const EchoHero = () => {
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ duration: 0.8, delay: 0.5, ease: [0.16, 1, 0.3, 1] }}
                 className="text-xs sm:text-sm md:text-base"
-                style={{ color: "rgba(246, 245, 245, 0.75)", lineHeight: 1.2 }}
+                style={{ color: "#FFFFFF", lineHeight: 1.25 }}
               >
                 Show it once. Run it forever. Echo watches you do a workflow
                 on your screen, then re-runs it autonomously across thousands
