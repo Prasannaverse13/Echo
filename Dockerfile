@@ -32,13 +32,14 @@ ENV PORT=8080
 ENV HOSTNAME=0.0.0.0
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Copy standalone output
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+# Copy build output (default Next.js build, not standalone)
+COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/node_modules ./node_modules
 
 # Non-root user (distroless runs as nonroot by default)
 USER nonroot
 
 EXPOSE 8080
-CMD ["server.js"]
+CMD ["node_modules/next/dist/bin/next", "start", "-p", "8080", "-H", "0.0.0.0"]
