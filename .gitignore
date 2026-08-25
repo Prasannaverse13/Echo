@@ -46,6 +46,9 @@ start-dev-mock.bat
 # vercel
 .vercel
 
+# pnpm
+pnpm-workspace.yaml
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
