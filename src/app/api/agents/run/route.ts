@@ -46,7 +46,10 @@ export async function POST(req: NextRequest) {
 
   const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-  // Best-effort persist to Firestore
+  // Best-effort persist to Firestore. The Cloud Run worker (src/worker)
+  // reads this document to know which inputs to process and which skill
+  // to invoke. We persist the inputs[] here so the worker doesn't need
+  // a separate request payload.
   if (isGcpAvailable()) {
     writeDoc("runs", runId, {
       runId,
@@ -54,12 +57,14 @@ export async function POST(req: NextRequest) {
       agentId: body.agentId ?? null,
       goal: body.goal ?? null,
       totalInputs: body.inputs.length,
+      inputs: body.inputs,
       status: "queued",
       startedAt: new Date().toISOString(),
       skill: body.skill ?? null,
     }).catch(() => undefined);
 
-    // Publish a "run.created" event so a Cloud Run worker can pick it up
+    // Publish a "run.created" event so the Cloud Run worker (subscribed to
+    // `echo-runs` via the `echo-runs-worker` subscription) can pick it up.
     publishRunEvent({
       eventType: "run.created",
       runId,

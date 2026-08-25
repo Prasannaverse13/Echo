@@ -1,18 +1,27 @@
 # Echo — Google Cloud Build pipeline
-# Triggered on push to main, builds the image, pushes to Artifact Registry,
-# and deploys to Cloud Run.
+# Triggered on push to main. Builds TWO images (API + worker), pushes both
+# to Artifact Registry, deploys both to Cloud Run.
 #
-# Required substitutions (configure in trigger or via gcloud builds):
+# Service topology
+#   - `echo`        — the Next.js API (HTTP, /api/* routes)
+#   - `echo-worker` — the Pub/Sub listener that invokes the ADK agent
+#                     per input. Internal-only, no public ingress.
+#
+# The worker subscribes to the `echo-runs` Pub/Sub topic via the
+# `echo-runs-worker` subscription (auto-created on first boot by the
+# worker, idempotent). When the API publishes a `run.created` event,
+# the worker pulls it, reads the run doc from Firestore, and runs
+# `runEchoAgent` for each input with bounded concurrency.
+#
+# Required substitutions:
 #   _REGION:               us-central1
-#   _REPO:                 echo              (Artifact Registry repo name)
-#   _SERVICE:              echo              (Cloud Run service name)
-#   _GEMINI_API_KEY:       (set as Secret Manager reference: projects/PROJECT/secrets/gemini-key)
+#   _REPO:                 echo
 #   _GCP_PROJECT_ID:       echo-hackathon-2026
+#   _GEMINI_API_KEY:       Secret Manager reference (gemini-key:latest)
 
 substitutions:
   _REGION: us-central1
   _REPO: echo
-  _SERVICE: echo
   _GCP_PROJECT_ID: echo-hackathon-2026
 
 options:
@@ -20,35 +29,30 @@ options:
   machineType: E2_HIGHCPU_8
 
 steps:
-  # 1. Build the container image
-  - id: build
+  # --- API service ---
+  - id: build-api
     name: gcr.io/cloud-builders/docker
     args:
       - build
-      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
-      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:latest
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo:${SHORT_SHA}
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo:latest
       - --build-arg=NEXT_PUBLIC_GCP_PROJECT_ID=${_GCP_PROJECT_ID}
-      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:latest
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo:latest
       - .
 
-  # 2. Push the image to Artifact Registry
-  - id: push
+  - id: push-api
     name: gcr.io/cloud-builders/docker
-    args:
-      - push
-      - --all-tags
-      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}
+    args: [push, --all-tags, ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo]
 
-  # 3. Deploy to Cloud Run (concurrency=80, min-instances=0, max=10)
-  - id: deploy
+  - id: deploy-api
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud
     args:
       - run
       - deploy
-      - ${_SERVICE}
+      - echo
       - --region=${_REGION}
-      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo:${SHORT_SHA}
       - --platform=managed
       - --allow-unauthenticated
       - --port=8080
@@ -61,8 +65,47 @@ steps:
       - --set-env-vars=NODE_ENV=production,GCP_PROJECT_ID=${_GCP_PROJECT_ID},GCP_VERTEX_LOCATION=${_REGION},GCP_PUBSUB_TOPIC=echo-runs
       - --set-secrets=GEMINI_API_KEY=gemini-key:latest
 
-images:
-  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
-  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:latest
+  # --- Worker service (separate image, separate Cloud Run service) ---
+  - id: build-worker
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - Dockerfile.worker
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-worker:${SHORT_SHA}
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-worker:latest
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-worker:latest
+      - .
 
-timeout: 1200s
+  - id: push-worker
+    name: gcr.io/cloud-builders/docker
+    args: [push, --all-tags, ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-worker]
+
+  - id: deploy-worker
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - echo-worker
+      - --region=${_REGION}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-worker:${SHORT_SHA}
+      - --platform=managed
+      - --no-allow-unauthenticated
+      - --port=8080
+      - --memory=512Mi
+      - --cpu=1
+      - --concurrency=10
+      - --timeout=3600
+      - --min-instances=1
+      - --max-instances=20
+      - --set-env-vars=NODE_ENV=production,GCP_PROJECT_ID=${_GCP_PROJECT_ID},GCP_VERTEX_LOCATION=${_REGION},GCP_PUBSUB_TOPIC=echo-runs,GCP_PUBSUB_SUBSCRIPTION=echo-runs-worker,WORKER_CONCURRENCY=4
+      - --set-secrets=GEMINI_API_KEY=gemini-key:latest
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo:latest
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-worker:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-worker:latest
+
+timeout: 1800s

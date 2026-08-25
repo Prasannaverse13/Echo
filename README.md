@@ -29,8 +29,8 @@ flowchart TB
     end
 
     subgraph Edge["Cloud Run · us-central1 (echo-hackathon-2026)"]
-        API["/api/skills/reconstruct<br/>/api/agents/compose<br/>/api/agents/run<br/>/api/integrations/telegram"]
-        Worker["Echo Worker<br/>Node 20 container<br/>subscribes to echo-runs"]
+        API["echo API service<br/>Next.js Route Handlers<br/>/api/skills · /api/agents · /api/integrations"]
+        Worker["echo-worker service<br/>src/worker/index.ts<br/>Pub/Sub listener + ADK agent runner"]
     end
 
     subgraph GCP["Google Cloud (project: echo-hackathon-2026)"]
@@ -248,6 +248,12 @@ echo/
 │       └── client/stores.ts                 namespaced per-user localStorage: runs · logs · triggers ·
 │                                            agents · skills. echo:store:* events for cross-tab sync.
 │
+│   └── worker/                              Cloud Run worker service (standalone Node, no Next.js)
+│       └── index.ts                         Subscribes to echo-runs Pub/Sub topic, reads run docs
+│                                            from Firestore, invokes runEchoAgent per input with
+│                                            bounded concurrency, streams events back to dashboard.
+│                                            Includes /healthz HTTP endpoint for Cloud Run.
+│
 ├── docs/
 │   └── architecture.md                      Mermaid source for the architecture diagram (mirrors README §2).
 │
@@ -257,14 +263,17 @@ echo/
 │   ├── README.md                            Documents where to swap media assets.
 │   └── (favicon in src/app/)
 │
-├── scripts/                                 Local smoke tests
+├── scripts/                                 Local smoke tests + utility scripts
 │   ├── smoke-test.cjs                       9/9 API tests against /api/skills, /api/agents.
 │   ├── smoke-fallback.cjs                   Mock-fallback path (no API key, no GCP).
 │   ├── smoke-agent.ts                       ADK agent via Vertex AI; tsx-runnable.
-│   └── test-auth.cjs                        Page-render checks for the full 17-page surface.
+│   ├── smoke-worker.cjs                     Worker boot + /healthz + SIGTERM graceful-shutdown test.
+│   ├── test-auth.cjs                        Page-render checks for the full 17-page surface.
+│   └── bind-subscription.ps1                One-time Pub/Sub subscription bind for production worker.
 │
-├── Dockerfile                               Multi-stage Next.js build → distroless Node 20 runner.
-├── cloudbuild.yaml                          Cloud Build pipeline → Cloud Run.
+├── Dockerfile                               Multi-stage Next.js build → distroless Node 20 runner (API).
+├── Dockerfile.worker                        Worker build: esbuild bundles src/worker → distroless Node 20.
+├── cloudbuild.yaml                          Cloud Build pipeline → builds + deploys BOTH API + worker.
 ├── .env.local.example                       Env template (placeholders, no real secrets).
 ├── .gitignore                               Covers .env*, dev.log, .vercel, start-dev*.bat.
 ├── next.config.ts                           Next.js 16 + Turbopack config.
@@ -299,14 +308,58 @@ Pub/Sub
 |---|---|---|---|
 | **Vertex AI** | `projects/echo-hackathon-2026/locations/us-central1/publishers/google/models/gemini-3.5-flash` (or 2.5-flash) | Fallback Gemini inference; ADK agent | `src/lib/genai.ts` (`tryVertexOnce`) · `src/lib/agents/echo-agent.ts` |
 | **Gemini API (AI Studio)** | `https://generativelanguage.googleapis.com` | Primary Gemini inference (3.5+ path) | `src/lib/genai.ts` (`_tryAistudio`) |
-| **Cloud Firestore** | `(default)` database in `nam5` / us-central1 | Skill library · agent plans · run history | `src/lib/gcp.ts` (`getFirestore`, `writeRun`, `writeAgent`, `writeSkill`) |
-| **Cloud Pub/Sub** | `projects/echo-hackathon-2026/topics/echo-runs` | Run event fan-out (created · progress · completed) | `src/lib/gcp.ts` (`getPubsubTopic`, `publishRunEvent`) |
-| **Cloud Run** | Service: `echo` (planned) | API + worker container, scales 0–10 | `Dockerfile` (multi-stage) + `cloudbuild.yaml` |
-| **Artifact Registry** | `us-central1-docker.pkg.dev/echo-hackathon-2026/echo/echo` | Docker image registry for Cloud Run | `cloudbuild.yaml` (`docker push`) |
-| **Secret Manager** | `projects/echo-hackathon-2026/secrets/gemini-key` | Runtime `GEMINI_API_KEY` | `cloudbuild.yaml` (mount at deploy) |
-| **Cloud Build** | Trigger on `main` | CI/CD → Artifact Registry → Cloud Run | `cloudbuild.yaml` |
+| **Cloud Firestore** | `(default)` database in `nam5` / us-central1 | Skill library · agent plans · run history + per-run events subcollection | `src/lib/gcp.ts` (`getFirestore`, `writeRun`, `writeAgent`, `writeSkill`, `writeRunEvent`) |
+| **Cloud Pub/Sub** | `projects/echo-hackathon-2026/topics/echo-runs` | Run event fan-out (created · event · progress · completed) | `src/lib/gcp.ts` (`getPubsubTopic`, `publishRunEvent`) |
+| **Cloud Pub/Sub subscription** | `projects/echo-hackathon-2026/subscriptions/echo-runs-worker` | The worker pulls `run.created` events from here | `src/worker/index.ts` (`pubsub.subscription()`) |
+| **Cloud Run · API** | Service: `echo` | Next.js API + dashboard, scales 0–10, public | `Dockerfile` (multi-stage) + `cloudbuild.yaml` |
+| **Cloud Run · Worker** | Service: `echo-worker` | Pub/Sub listener that invokes the ADK agent per input, internal-only, min-instances=1, max=20 | `Dockerfile.worker` (esbuild bundle) + `cloudbuild.yaml` |
+| **Artifact Registry** | `us-central1-docker.pkg.dev/echo-hackathon-2026/echo/{echo,echo-worker}` | Docker image registry for both Cloud Run services | `cloudbuild.yaml` (`docker push`) |
+| **Secret Manager** | `projects/echo-hackathon-2026/secrets/gemini-key` | Runtime `GEMINI_API_KEY` (mounted on both services) | `cloudbuild.yaml` (`--set-secrets`) |
+| **Cloud Build** | Trigger on `main` | CI/CD → Artifact Registry → Cloud Run (both services) | `cloudbuild.yaml` |
 
 APIs enabled on the project: `aiplatform.googleapis.com`, `firestore.googleapis.com`, `pubsub.googleapis.com`, `run.googleapis.com`, `cloudbuild.googleapis.com`, `artifactregistry.googleapis.com`, `secretmanager.googleapis.com`, `iam.googleapis.com`, `logging.googleapis.com`, `storage.googleapis.com`.
+
+### The Worker (`src/worker/index.ts`)
+
+Echo's **worker is a real Cloud Run service** that runs the ADK agent for every input of every run. The flow:
+
+1. User clicks *Run on N inputs* on `/agents/[id]` → `POST /api/agents/run`
+2. API route writes the run to Firestore (`runs/{runId}`) **and** publishes a `run.created` event to the `echo-runs` Pub/Sub topic
+3. **Worker** (subscribed via `echo-runs-worker` subscription) pulls the message
+4. Worker reads `runs/{runId}` from Firestore → gets `inputs[]`, `skill`, `goal`
+5. For each input (bounded-concurrency loop, `WORKER_CONCURRENCY=4` by default):
+   - Invoke `runEchoAgent({ runId, skillId, inputId, input, skill })` from `src/lib/agents/echo-agent.ts` (the same ADK agent the API uses)
+   - Stream every yielded `AgentAction` (`thought` / `tool_call` / `final_answer`) to `runs/{runId}/events/{eventId}` in Firestore
+   - Publish `run.event` and `run.progress` events back to the topic
+6. When all inputs complete: write `status: "completed"`, publish `run.completed`
+
+The worker is intentionally framework-free — no Next.js, no React — so it boots in ~1s and scales horizontally. Cloud Run `--min-instances=1` keeps one warm so first run is fast; `--max-instances=20` covers bursty hackathon demos. The worker is `--no-allow-unauthenticated` (internal-only); the API service is the only public ingress.
+
+**Run it locally:**
+
+```bash
+# One-time: bind the Pub/Sub subscription (production path)
+pnpm worker:bind   # or: pwsh -File scripts/bind-subscription.ps1
+
+# Local: start the worker with your gcloud ADC
+gcloud auth application-default login
+gcloud config set project echo-hackathon-2026
+pnpm worker        # tsx watch, hot reload
+# OR
+pnpm worker:once   # single run
+```
+
+**Smoke test the worker (no GCP needed):**
+
+```bash
+pnpm smoke:worker   # boots worker, hits /healthz, SIGTERM, asserts clean exit
+```
+
+**Production deploy** (Cloud Build does this automatically on push to `main`):
+
+```bash
+pnpm worker:deploy  # or just push to main — cloudbuild.yaml deploys both services
+```
 
 ---
 
@@ -391,9 +444,9 @@ The runtime service account is the default Cloud Run compute SA — it already h
 - **GSAP + framer-motion** — GSAP for scroll/marquee/parallax/ScrollTrigger; framer-motion for the hero `WordsPullUp` pattern. All animations honor `prefers-reduced-motion` via the `Reveal` component.
 - **Gemini 3.5 Flash for everything** — fast + cheap + supports structured output, vision, and tool calling through one model. Good fit for an agent that does real work.
 - **Application Default Credentials** — production-grade auth path, no JSON key files to leak, works identically on Cloud Run, Vercel, and local dev.
-- **Cloud Run, not GKE** — auto-scales to zero, no cluster ops. The task is bursty (one record, then 1000s of input runs), perfect fit.
-- **Firestore + Pub/Sub, not Cloud SQL + Kafka** — both are serverless, both autoscale, both have first-party Node SDKs. The data model (documents + events) is a natural fit.
-- **Mock fallbacks everywhere** — every AI call and every GCP write has a deterministic mock path so the demo works without a key and the smoke tests run in CI without secrets.
+- **Cloud Run, not GKE** — auto-scales to zero, no cluster ops. The task is bursty (one record, then 1000s of input runs), perfect fit. Echo deploys **two** Cloud Run services from the same repo: `echo` (the Next.js API) and `echo-worker` (the Pub/Sub listener that runs the ADK agent per input). Both are built and deployed by one `cloudbuild.yaml` on every push to `main`.
+- **Firestore + Pub/Sub, not Cloud SQL + Kafka** — both are serverless, both autoscale, both have first-party Node SDKs. The data model (documents + events) is a natural fit. The worker subscribes to the same Pub/Sub topic the API publishes to — the same channel, two roles.
+- **Mock fallbacks everywhere** — every AI call and every GCP write has a deterministic mock path so the demo works without a key and the smoke tests run in CI without secrets. The worker itself runs in "health-only mode" when `GCP_ENABLED=false` (boots, serves `/healthz`, exits on SIGTERM).
 
 ---
 

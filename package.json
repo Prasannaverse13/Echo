@@ -11,7 +11,12 @@
     "smoke": "node scripts/smoke-test.cjs",
     "smoke:fallback": "node scripts/smoke-fallback.cjs",
     "smoke:auth": "node scripts/test-auth.cjs",
-    "smoke:agent": "tsx scripts/smoke-agent.ts"
+    "smoke:agent": "tsx scripts/smoke-agent.ts",
+    "smoke:worker": "node scripts/smoke-worker.cjs",
+    "worker": "tsx watch src/worker/index.ts",
+    "worker:once": "tsx src/worker/index.ts",
+    "worker:bind": "powershell -ExecutionPolicy Bypass -File scripts/bind-subscription.ps1",
+    "worker:deploy": "gcloud run deploy echo-worker --source . --region us-central1"
   },
   "dependencies": {
     "@google-cloud/firestore": "^9.0.0",
