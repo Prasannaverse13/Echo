@@ -1,9 +1,0 @@
-fix: bind-subscription.ps1 PowerShell error + track pnpm-workspace.yaml
-
-The script was failing because gcloud writes the "Updates are available"
-message to stderr which PowerShell treats as a non-terminating error.
-Replaced the gcloud --version precheck with a simple Test-Path on the
-gcloud binary file.
-
-Also tracked pnpm-workspace.yaml in git (the .gitignore line was
-removed earlier but the file was never committed).
