@@ -2,6 +2,9 @@
 # ---------------------------------------------------------------------------
 # Echo Worker — Cloud Run service that subscribes to the `echo-runs` Pub/Sub
 # topic and invokes the Echo ADK agent for each input.
+# ---------------------------------------------------------------------------
+
+ARG workerDir=.
 #
 # Build:   docker build -f Dockerfile.worker -t echo-worker .
 # Deploy:  gcloud run deploy echo-worker --image ... --region us-central1

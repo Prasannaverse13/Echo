@@ -23,6 +23,7 @@ substitutions:
   _REGION: us-central1
   _REPO: echo
   _GCP_PROJECT_ID: echo-hackathon-2026
+  _WORKER_DIR: .
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -75,10 +76,11 @@ steps:
       - build
       - -f
       - Dockerfile.worker
+      - --build-arg=workerDir=${_WORKER_DIR}
       - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-worker:${SHORT_SHA}
       - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-worker:latest
       - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-worker:latest
-      - .
+      - ${_WORKER_DIR}
 
   - id: push-worker
     name: gcr.io/cloud-builders/docker
