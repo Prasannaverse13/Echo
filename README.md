@@ -23,21 +23,21 @@ The headline: **one recording becomes a reusable worker that handles 10s–1000s
 ```mermaid
 flowchart TB
     subgraph Browser["User browser (Next.js 16 + React 19)"]
-        UI[Landing · Pricing · Docs<br/>Dashboard · Skills · Agents<br/>Record · Compose · Runs · Logs · Triggers · Integrations · Settings]
-        Capture[getDisplayMedia<br/>screen capture<br/>2s frame sampling]
-        Stores[namespaced localStorage<br/>echo.{userId}.{key}<br/>runs · logs · triggers · agents · skills]
+        UI["Landing · Pricing · Docs<br/>Dashboard · Skills · Agents<br/>Record · Compose · Runs · Logs · Triggers · Integrations · Settings"]
+        Capture["getDisplayMedia<br/>screen capture<br/>2s frame sampling"]
+        Stores["namespaced localStorage<br/>echo · userId · key<br/>runs · logs · triggers · agents · skills"]
     end
 
     subgraph Edge["Cloud Run · us-central1 (echo-hackathon-2026)"]
         API["/api/skills/reconstruct<br/>/api/agents/compose<br/>/api/agents/run<br/>/api/integrations/telegram"]
-        Worker[Echo Worker<br/>Node 20 container<br/>subscribes to echo-runs]
+        Worker["Echo Worker<br/>Node 20 container<br/>subscribes to echo-runs"]
     end
 
     subgraph GCP["Google Cloud (project: echo-hackathon-2026)"]
         Gemini["Vertex AI<br/>gemini-3.5-flash → 3-flash<br/>→ 2.5-flash → 2.5-flash-lite"]
         AIStudio["AI Studio<br/>gemini-3.5-flash<br/>(public Gemini API)"]
-        ADK["ADK Agent · src/lib/agents/echo-agent.ts<br/>LlmAgent + tool calling loop<br/>AsyncGenerator<AgentAction>"]
-        FS[("Firestore (nam5 / us-central1)<br/>skills/ · agents/ · runs/{id}/events/")]
+        ADK["ADK Agent · src/lib/agents/echo-agent.ts<br/>LlmAgent + tool calling loop<br/>AsyncGenerator of AgentAction"]
+        FS[("Firestore (nam5 / us-central1)<br/>skills · agents · runs · id · events")]
         PS["Pub/Sub topic<br/>projects/echo-hackathon-2026/topics/echo-runs<br/>events: run.created · run.progress · run.completed"]
     end
 
