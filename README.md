@@ -64,8 +64,8 @@ flowchart TB
     Worker -->|publish run.progress · run.completed| PS
     PS -->|subscribe via Firestore listener| Browser
 
-    Browser <-->|live polling 1.5s| Stores
-    Stores <-.->|echo:store:* events<br/>cross-tab sync| Browser
+    Browser <-->|"live polling 1.5s"| Stores
+    Stores <-.->|"echo:store:* events / cross-tab sync"| Browser
 ```
 
 ### Request lifecycle (a single `/api/agents/run` call)
