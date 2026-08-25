@@ -36,5 +36,12 @@
     "tsx": "^4.23.12",
     "typescript": "^5"
   },
-  "packageManager": "pnpm@11.22.0"
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "unrs-resolver",
+      "@google/genai",
+      "esbuild",
+      "protobufjs"
+    ]
+  }
 }
