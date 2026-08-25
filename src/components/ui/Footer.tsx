@@ -13,8 +13,7 @@ export function Footer() {
             Echo
           </Link>
         </div>
-        <div className="mt-12 pt-6 border-t border-stone/50 flex flex-col md:flex-row justify-between gap-4 text-caption">
-          <p>© 2026 Echo. All rights reserved.</p>
+        <div className="mt-12 pt-6 border-t border-stone/50 flex flex-col md:flex-row justify-end gap-4 text-caption">
           <p>Built for the All Things Agentic Hackathon.</p>
         </div>
       </div>

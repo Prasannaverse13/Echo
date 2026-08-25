@@ -81,7 +81,7 @@ export default function SkillsPage() {
             6 skills · 390 lifetime runs · 96.7% success
           </p>
         </div>
-        <Button variant="light" size="md" href="/app/record">
+        <Button variant="light" size="md" href="/record">
           ◉ Record new skill
         </Button>
       </div>
@@ -101,7 +101,7 @@ export default function SkillsPage() {
         {skills.map((skill) => (
           <Link
             key={skill.id}
-            href={`/app/skills/${skill.id}`}
+            href={`/skills/${skill.id}`}
             className="group block"
           >
             <FeatureCard

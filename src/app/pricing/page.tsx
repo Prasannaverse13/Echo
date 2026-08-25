@@ -29,10 +29,11 @@ const plans = [
       "Priority Gemini access",
       "Email support",
     ],
-    cta: "Start free trial",
+    cta: "Notify me",
     href: "/signup",
     surface: "wisteria" as const,
     highlighted: true,
+    comingSoon: true,
   },
   {
     name: "Team",
@@ -47,9 +48,10 @@ const plans = [
       "Skill versioning",
       "Slack support",
     ],
-    cta: "Contact sales",
-    href: "/contact",
+    cta: "Notify me",
+    href: "/signup",
     surface: "dusty-sky" as const,
+    comingSoon: true,
   },
   {
     name: "Enterprise",
@@ -64,9 +66,10 @@ const plans = [
       "Dedicated CSM",
       "99.9% SLA",
     ],
-    cta: "Contact sales",
+    cta: "Notify me",
     href: "/contact",
     surface: "desert-clay" as const,
+    comingSoon: true,
   },
 ];
 
@@ -105,10 +108,27 @@ export default function PricingPage() {
                 <h3 className="text-heading-sm font-bold mb-1">{plan.name}</h3>
                 <p className="text-body-sm opacity-70 mb-5">{plan.description}</p>
                 <div className="mb-6">
-                  <span className="text-display-md font-bold tabular-nums">
-                    {plan.price}
-                  </span>
-                  <span className="text-body-sm opacity-70">{plan.period}</span>
+                  {plan.comingSoon ? (
+                    <div className="flex items-baseline gap-3">
+                      <span
+                        className="text-display-md font-bold tabular-nums select-none"
+                        style={{ filter: "blur(8px)", opacity: 0.5 }}
+                        aria-hidden
+                      >
+                        {plan.price}
+                      </span>
+                      <span className="text-body-sm font-medium opacity-90">
+                        Coming soon
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="text-display-md font-bold tabular-nums">
+                        {plan.price}
+                      </span>
+                      <span className="text-body-sm opacity-70">{plan.period}</span>
+                    </>
+                  )}
                 </div>
                 <ul className="space-y-2 mb-8 flex-1">
                   {plan.features.map((f) => (

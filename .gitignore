@@ -29,16 +29,19 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+# dev server logs (regenerated on every run)
+dev.log
+dev.err.log
+dev-mock.log
+dev-fresh.log
+dev-fresh.log.err
+start-dev.bat
+start-dev-mock.bat
 
 # env files (commit the example, never the real .env.local)
 .env*
 !.env.local.example
 !.env.example
-
-# dev server logs (regenerated on every run)
-dev-fresh.log
-dev-fresh.log.err
-start-dev.bat
 
 # vercel
 .vercel

@@ -46,10 +46,10 @@ export default function DashboardPage() {
           </h1>
         </div>
         <div className="flex gap-3">
-          <Button variant="outline-light" size="md" href="/app/record">
+          <Button variant="outline-light" size="md" href="/record">
             ◉ Record new skill
           </Button>
-          <Button variant="light" size="md" href="/app/compose">
+          <Button variant="light" size="md" href="/compose">
             ❖ Compose agent
           </Button>
         </div>
@@ -85,7 +85,7 @@ export default function DashboardPage() {
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-heading-sm font-bold">Active agents</h2>
             <Link
-              href="/app/agents"
+              href="/agents"
               className="text-caption font-medium hover:underline underline-offset-4"
             >
               View all →
@@ -171,7 +171,7 @@ export default function DashboardPage() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-heading-sm font-bold">Your skills</h2>
           <Link
-            href="/app/skills"
+            href="/skills"
             className="text-caption font-medium hover:underline underline-offset-4"
           >
             View library →

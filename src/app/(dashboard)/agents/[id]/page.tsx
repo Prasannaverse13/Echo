@@ -66,7 +66,7 @@ export default async function AgentDetailPage({
   return (
     <div className="page-container py-10">
       <Link
-        href="/app/agents"
+        href="/agents"
         className="text-caption text-obsidian/60 hover:text-obsidian mb-6 inline-block"
       >
         ← Back to agents

@@ -94,7 +94,7 @@ export default function AgentsPage() {
             6 agents · 3 running · 2 done · 1 needs your eyes
           </p>
         </div>
-        <Button variant="light" size="md" href="/app/compose">
+        <Button variant="light" size="md" href="/compose">
           ❖ Compose new agent
         </Button>
       </div>
@@ -127,7 +127,7 @@ export default function AgentsPage() {
           return (
             <Link
               key={agent.id}
-              href={`/app/agents/${agent.id}`}
+              href={`/agents/${agent.id}`}
               className="block group"
             >
               <FeatureCard

@@ -105,6 +105,270 @@ const skillData: Record<
       },
     ],
   },
+  "inbox-triage": {
+    name: "Inbox Triage",
+    description: "Sorts, drafts replies, schedules meetings from your inbox.",
+    color: "wisteria",
+    intent:
+      "Every 15 minutes, scan unread email, classify each message (urgent / FYI / meeting request / spam), draft a reply where appropriate, and surface only what truly needs the user's eyes.",
+    trigger: "Every 15 min / New email",
+    steps: [
+      {
+        num: 1,
+        title: "Pull unread mail",
+        detail: "List unread threads from the last 15 minutes via the Gmail API.",
+      },
+      {
+        num: 2,
+        title: "Classify intent",
+        detail:
+          "For each thread, decide between urgent / FYI / meeting / spam using the user's last 30 days of similar labels.",
+      },
+      {
+        num: 3,
+        title: "Draft replies",
+        detail:
+          "Generate a short, on-tone reply draft for every actionable message and save as a Gmail draft (not sent).",
+      },
+      {
+        num: 4,
+        title: "Schedule meetings",
+        detail:
+          "When a thread looks like a meeting request, propose 3 free slots from Calendar and embed them in the draft.",
+      },
+      {
+        num: 5,
+        title: "Surface only the urgent",
+        detail:
+          "Push only the urgent-and-needs-decision threads to Echo; archive the rest silently.",
+      },
+    ],
+    integrations: ["Gmail", "Calendar"],
+    stats: [
+      { label: "Total runs", value: "124" },
+      { label: "Success rate", value: "98.4%" },
+      { label: "Avg duration", value: "0m 22s" },
+      { label: "Avg time saved", value: "38m/run" },
+    ],
+    runHistory: [
+      { id: "run_3820", input: "47 unread threads", status: "success", duration: "0m 18s", when: "5m ago" },
+      { id: "run_3819", input: "23 unread threads", status: "success", duration: "0m 14s", when: "20m ago" },
+      { id: "run_3818", input: "12 unread threads", status: "success", duration: "0m 11s", when: "35m ago" },
+      { id: "run_3817", input: "64 unread threads", status: "review", duration: "0m 31s", when: "1h ago" },
+      { id: "run_3816", input: "8 unread threads", status: "success", duration: "0m 09s", when: "1h ago" },
+    ],
+  },
+  "pdf-sheets": {
+    name: "PDF → Sheets",
+    description: "Extracts tabular data from PDFs into Google Sheets rows.",
+    color: "desert-clay",
+    intent:
+      "When a PDF lands in Drive/Invoices, detect any tables, convert them to structured rows, and append to the matching Google Sheet with column mapping preserved.",
+    trigger: "New PDF in Drive/Invoices",
+    steps: [
+      {
+        num: 1,
+        title: "Watch Drive folder",
+        detail: "Poll Drive/Invoices for new PDFs every 60s.",
+      },
+      {
+        num: 2,
+        title: "Locate tables",
+        detail:
+          "Use Gemini Vision to scan each page and locate any tabular data regions.",
+      },
+      {
+        num: 3,
+        title: "Extract rows",
+        detail:
+          "For each table, return rows as structured JSON with column headers preserved.",
+      },
+      {
+        num: 4,
+        title: "Map columns",
+        detail:
+          "Match the PDF's column names to existing Sheet headers (fuzzy match) and flag any unknown columns.",
+      },
+      {
+        num: 5,
+        title: "Append to Sheet",
+        detail:
+          "Append extracted rows to the bottom of the target sheet, leaving existing data intact.",
+      },
+    ],
+    integrations: ["Drive", "Sheets"],
+    stats: [
+      { label: "Total runs", value: "32" },
+      { label: "Success rate", value: "100%" },
+      { label: "Avg duration", value: "1m 48s" },
+      { label: "Avg time saved", value: "22m/run" },
+    ],
+    runHistory: [
+      { id: "run_2010", input: "Invoice_Stark_Aug.pdf", status: "success", duration: "1m 22s", when: "1d ago" },
+      { id: "run_2009", input: "Invoice_Acme_Jul.pdf", status: "success", duration: "2m 04s", when: "4d ago" },
+      { id: "run_2008", input: "Invoice_Globex_Jul.pdf", status: "success", duration: "1m 55s", when: "1w ago" },
+      { id: "run_2007", input: "Invoice_Initech_Jul.pdf", status: "success", duration: "1m 38s", when: "1w ago" },
+      { id: "run_2006", input: "Invoice_Tyrell_Jul.pdf", status: "success", duration: "2m 11s", when: "2w ago" },
+    ],
+  },
+  "weekly-report": {
+    name: "Weekly Report Generator",
+    description: "Pulls metrics, drafts a summary, posts to Slack.",
+    color: "mist-mint",
+    intent:
+      "Every Monday at 9am, pull last week's metrics from Sheets, draft a short summary with the headline wins and 3 things to watch, and post to the #team channel.",
+    trigger: "Schedule · Mon 9am",
+    steps: [
+      {
+        num: 1,
+        title: "Schedule trigger",
+        detail: "Cloud Scheduler fires the skill at 09:00 IST every Monday.",
+      },
+      {
+        num: 2,
+        title: "Pull weekly metrics",
+        detail:
+          "Read this week's rows from Sheets/Metrics and compute deltas vs the prior week.",
+      },
+      {
+        num: 3,
+        title: "Identify highlights",
+        detail:
+          "Rank rows by absolute change and pick the top 3 wins + top 3 dips.",
+      },
+      {
+        num: 4,
+        title: "Draft summary",
+        detail:
+          "Write a 5-line summary in the user's last-used voice (concise, second-person).",
+      },
+      {
+        num: 5,
+        title: "Post to Slack",
+        detail:
+          "Send the summary to #team with thread replies pre-drafted for each highlight.",
+      },
+    ],
+    integrations: ["Sheets", "Slack"],
+    stats: [
+      { label: "Total runs", value: "8" },
+      { label: "Success rate", value: "100%" },
+      { label: "Avg duration", value: "0m 54s" },
+      { label: "Avg time saved", value: "45m/run" },
+    ],
+    runHistory: [
+      { id: "run_0090", input: "Week of Aug 18", status: "success", duration: "0m 48s", when: "4d ago" },
+      { id: "run_0089", input: "Week of Aug 11", status: "success", duration: "0m 52s", when: "11d ago" },
+      { id: "run_0088", input: "Week of Aug 04", status: "success", duration: "0m 58s", when: "18d ago" },
+      { id: "run_0087", input: "Week of Jul 28", status: "success", duration: "1m 02s", when: "25d ago" },
+    ],
+  },
+  "lead-enricher": {
+    name: "LinkedIn Lead Enricher",
+    description: "Enriches HubSpot leads with LinkedIn data and writes notes.",
+    color: "dusty-sky",
+    intent:
+      "When HubSpot fires the 'new-lead' webhook, fetch the lead's LinkedIn profile (or company page if personal isn't public), summarize 2-3 talking points, and append them as a note on the HubSpot contact.",
+    trigger: "Webhook from HubSpot",
+    steps: [
+      {
+        num: 1,
+        title: "Receive webhook",
+        detail:
+          "Cloud Run endpoint accepts HubSpot's new-lead POST and enqueues a task.",
+      },
+      {
+        num: 2,
+        title: "Resolve LinkedIn",
+        detail:
+          "Search LinkedIn for the lead by name + company; prefer personal profile, fall back to company page.",
+      },
+      {
+        num: 3,
+        title: "Extract highlights",
+        detail:
+          "From the public profile, pull current role, recent posts, mutual connections, and shared groups.",
+      },
+      {
+        num: 4,
+        title: "Write HubSpot note",
+        detail:
+          "Append a 3-line note to the contact with the highlights and 1 suggested opener line.",
+      },
+      {
+        num: 5,
+        title: "Notify rep",
+        detail:
+          "DM the assigned rep in Slack with the note + a 'mark as enriched' button.",
+      },
+    ],
+    integrations: ["HubSpot", "LinkedIn"],
+    stats: [
+      { label: "Total runs", value: "156" },
+      { label: "Success rate", value: "92.3%" },
+      { label: "Avg duration", value: "0m 31s" },
+      { label: "Avg time saved", value: "8m/run" },
+    ],
+    runHistory: [
+      { id: "run_4401", input: "jane.doe@acme.com", status: "success", duration: "0m 24s", when: "12m ago" },
+      { id: "run_4400", input: "mark.smith@globex.io", status: "review", duration: "0m 41s", when: "1h ago" },
+      { id: "run_4399", input: "lisa@initech.com", status: "success", duration: "0m 28s", when: "2h ago" },
+      { id: "run_4398", input: "peter.g@stark.co", status: "success", duration: "0m 22s", when: "3h ago" },
+      { id: "run_4397", input: "anon@unknown.com", status: "failed", duration: "0m 06s", when: "4h ago" },
+    ],
+  },
+  "social-scheduler": {
+    name: "Social Media Scheduler",
+    description: "Reformats blog posts into platform-specific social copy.",
+    color: "wisteria",
+    intent:
+      "When a new post is published in Ghost, generate 3 platform-tuned variants (LinkedIn, Twitter/X, Threads) with appropriate length and hook placement, and queue them in Buffer for the next 9am slot.",
+    trigger: "New post in Ghost",
+    steps: [
+      {
+        num: 1,
+        title: "Watch Ghost",
+        detail: "Ghost webhook fires on 'post.published'.",
+      },
+      {
+        num: 2,
+        title: "Read post",
+        detail:
+          "Fetch the post HTML, strip tags, and extract the first 200 chars for hook generation.",
+      },
+      {
+        num: 3,
+        title: "Generate variants",
+        detail:
+          "Produce 3 distinct variants tuned to each platform's voice and length (LinkedIn 220-280ch, Twitter 240ch thread, Threads 400ch).",
+      },
+      {
+        num: 4,
+        title: "Add hashtags",
+        detail:
+          "Append 2-3 niche hashtags from a per-platform tag bank; never invent tags.",
+      },
+      {
+        num: 5,
+        title: "Queue in Buffer",
+        detail:
+          "Push the 3 variants to Buffer with the next 9am publish slot; tag the post in Buffer for tracking.",
+      },
+    ],
+    integrations: ["Ghost", "Twitter", "LinkedIn"],
+    stats: [
+      { label: "Total runs", value: "23" },
+      { label: "Success rate", value: "100%" },
+      { label: "Avg duration", value: "0m 47s" },
+      { label: "Avg time saved", value: "18m/run" },
+    ],
+    runHistory: [
+      { id: "run_1201", input: "Why Taskmasters beat workflow tools", status: "success", duration: "0m 39s", when: "3d ago" },
+      { id: "run_1200", input: "From demo to production: lessons from Gemini 3.5", status: "success", duration: "0m 51s", when: "1w ago" },
+      { id: "run_1199", input: "Composing skills: the 11x playbook", status: "success", duration: "0m 44s", when: "2w ago" },
+      { id: "run_1198", input: "Why ADK + Gemini is the right bet", status: "success", duration: "0m 50s", when: "3w ago" },
+    ],
+  },
 };
 
 export default async function SkillDetailPage({
@@ -119,7 +383,7 @@ export default async function SkillDetailPage({
   return (
     <div className="page-container py-10">
       <Link
-        href="/app/skills"
+        href="/skills"
         className="text-caption text-obsidian/60 hover:text-obsidian mb-6 inline-block"
       >
         ← Back to skills

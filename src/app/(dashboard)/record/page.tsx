@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Button, FeatureTag, FeatureCard } from "@/components/ui";
+import { appendLog, getUserId, type SkillRecord, saveSkillToStore } from "@/lib/client/stores";
 
 type Phase = "idle" | "permission" | "recording" | "paused" | "uploading" | "learning" | "review" | "error";
 
@@ -197,6 +198,40 @@ export default function RecordPage() {
     frameBlobsRef.current = [];
   };
 
+  const userId = React.useMemo(getUserId, []);
+
+  const saveSkill = () => {
+    const name = (skillName || "Untitled skill").trim();
+    const id = `skill_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const colors: SkillRecord["color"][] = ["dusty-sky", "wisteria", "desert-clay", "mist-mint"];
+    const skill: SkillRecord = {
+      id,
+      name,
+      description: skillDescription || "Recorded from screen capture",
+      color: colors[Math.floor(Math.random() * colors.length)],
+      trigger: "Manual",
+      steps: steps.map((s) => ({ num: s.num, title: s.title, detail: s.detail, at: s.at })),
+      createdAt: new Date().toISOString(),
+      source: "recorder",
+    };
+    saveSkillToStore(userId, skill);
+    appendLog(userId, { level: "success", agent: "echo-recorder", msg: `Skill saved: ${name}` });
+    // Persist the skill back to the server too (best-effort)
+    fetch("/api/skills/reconstruct", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        skillId: id,
+        name,
+        description: skill.description,
+        steps: skill.steps,
+        save: true,
+      }),
+    }).catch(() => undefined);
+    // Hand off to the skills page
+    if (typeof window !== "undefined") window.location.href = `/skills/${id}`;
+  };
+
   const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
   const ss = String(elapsed % 60).padStart(2, "0");
 
@@ -285,7 +320,7 @@ export default function RecordPage() {
                     <Button variant="outline-light" size="md" onClick={reset}>
                       ↻ Re-record
                     </Button>
-                    <Button variant="light" size="md">
+                    <Button variant="light" size="md" onClick={saveSkill}>
                       ✓ Save skill
                     </Button>
                   </>

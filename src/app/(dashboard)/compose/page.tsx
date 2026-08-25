@@ -2,8 +2,17 @@
 
 import * as React from "react";
 import { Button, FeatureTag, FeatureCard } from "@/components/ui";
+import {
+  appendLog,
+  getUserId,
+  saveAgent,
+  saveRun,
+  saveTrigger,
+  type AgentRecord,
+  type TriggerRecord,
+} from "@/lib/client/stores";
 
-type Phase = "input" | "planning" | "review" | "scheduled";
+type Phase = "input" | "planning" | "review" | "scheduled" | "running" | "completed";
 
 interface SubTask {
   num: number;
@@ -17,6 +26,7 @@ const exampleGoal =
   "Every Friday at 5pm, get this week's new HubSpot leads, enrich them with LinkedIn, draft a personalized outreach email for each, and put the drafts in my Gmail drafts folder.";
 
 export default function ComposePage() {
+  const userId = React.useMemo(getUserId, []);
   const [phase, setPhase] = React.useState<Phase>("input");
   const [goal, setGoal] = React.useState("");
   const [plan, setPlan] = React.useState<{
@@ -25,6 +35,8 @@ export default function ComposePage() {
     totalEstCost: string;
     reasoning: string;
   } | null>(null);
+  const [agentId, setAgentId] = React.useState<string | null>(null);
+  const [runId, setRunId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
   const startPlanning = async () => {
@@ -164,7 +176,7 @@ export default function ComposePage() {
       )}
 
       {/* Review phase */}
-      {(phase === "review" || phase === "scheduled") && plan && (
+      {(phase === "review" || phase === "scheduled" || phase === "running" || phase === "completed") && plan && (
         <div className="max-w-4xl space-y-6">
           <FeatureCard surface="sandstone" padding="lg">
             <p className="text-caption font-medium uppercase opacity-60 mb-2">
@@ -248,10 +260,10 @@ export default function ComposePage() {
               when it's done.
             </p>
             <div className="flex flex-wrap gap-3">
-              <Button variant="dark" size="md" onClick={() => setPhase("scheduled")}>
+              <Button variant="dark" size="md" onClick={() => doSchedule()}>
                 ✓ Schedule
               </Button>
-              <Button variant="outline-dark" size="md">
+              <Button variant="outline-dark" size="md" onClick={() => doRunNow()}>
                 ▶ Run once now
               </Button>
               <Button variant="outline-dark" size="md" onClick={() => setPhase("input")}>
@@ -267,8 +279,42 @@ export default function ComposePage() {
                 <div>
                   <h3 className="text-heading-sm font-bold">Agent scheduled</h3>
                   <p className="text-body-sm opacity-70 mt-1">
-                    Next run: configured by you. We'll ping you on Slack when
-                    it starts and when it finishes.
+                    Saved to your workspace. Visit{" "}
+                    <a className="underline" href="/triggers">Triggers</a> to set the cron, or{" "}
+                    <a className="underline" href="/agents">Agents</a> to see all your composed agents.
+                  </p>
+                </div>
+              </div>
+            </FeatureCard>
+          )}
+
+          {phase === "running" && runId && (
+            <FeatureCard surface="obsidian" padding="lg" className="text-paper-white">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-full bg-paper-white/10 flex items-center justify-center">
+                  <span className="text-2xl animate-spin">⟳</span>
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-heading-sm font-bold">Run started</h3>
+                  <p className="text-body-sm text-paper-white/60 mt-1">
+                    Sub-agents are processing the inputs in parallel. Watch progress on the{" "}
+                    <a className="underline" href="/runs">Runs</a> page.
+                  </p>
+                </div>
+                <code className="text-caption font-mono text-paper-white/60">{runId}</code>
+              </div>
+            </FeatureCard>
+          )}
+
+          {phase === "completed" && runId && (
+            <FeatureCard surface="mist-mint" padding="lg">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="text-3xl">✓</span>
+                <div>
+                  <h3 className="text-heading-sm font-bold">Run completed</h3>
+                  <p className="text-body-sm opacity-70 mt-1">
+                    Echo finished processing. See the full run on the{" "}
+                    <a className="underline" href="/runs">Runs</a> page.
                   </p>
                 </div>
               </div>
@@ -278,4 +324,94 @@ export default function ComposePage() {
       )}
     </div>
   );
+
+  async function persistAgent(status: AgentRecord["status"]): Promise<AgentRecord> {
+    if (!plan) throw new Error("no plan");
+    const id = agentId ?? `agent_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const agent: AgentRecord = {
+      id,
+      name: deriveAgentName(goal),
+      goal,
+      subtasks: plan.subtasks,
+      totalEstTime: plan.totalEstTime,
+      totalEstCost: plan.totalEstCost,
+      reasoning: plan.reasoning,
+      status,
+      createdAt: new Date().toISOString(),
+    };
+    saveAgent(userId, agent);
+    setAgentId(id);
+    return agent;
+  }
+
+  function deriveAgentName(g: string): string {
+    const first = g.split(/[.!?\n]/)[0].trim();
+    const words = first.split(/\s+/).slice(0, 6).join(" ");
+    return words.length > 50 ? words.slice(0, 47) + "..." : words || "Untitled agent";
+  }
+
+  function doSchedule() {
+    persistAgent("active").then((agent) => {
+      const trigger: TriggerRecord = {
+        id: `trg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        name: `Run ${agent.name}`,
+        type: "Schedule",
+        skillId: agent.id,
+        skillName: agent.name,
+        status: "active",
+        schedule: "Every Monday 9am",
+        lastFired: "—",
+        createdAt: new Date().toISOString(),
+      };
+      saveTrigger(userId, trigger);
+      appendLog(userId, { level: "success", agent: "echo-manager", msg: `Agent scheduled: ${agent.name}` });
+      setPhase("scheduled");
+    });
+  }
+
+  function doRunNow() {
+    setError(null);
+    setPhase("running");
+    persistAgent("active").then((agent) => {
+      const id = `run_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      setRunId(id);
+      saveRun(userId, {
+        id,
+        skillId: agent.id,
+        skillName: agent.name,
+        agentId: agent.id,
+        goal: agent.goal,
+        inputs: Array.from({ length: 5 }).map((_, i) => ({ id: `input_${i + 1}`, payload: { row: i + 1 } })),
+        totalInputs: 5,
+        status: "running",
+        progress: 0,
+        startedAt: new Date().toISOString(),
+        gcp: "disabled",
+        message: "Sub-agent spawning",
+      });
+      appendLog(userId, { level: "info", agent: "echo-manager", scope: id, msg: `Run ${id} started for agent "${agent.name}"` });
+      appendLog(userId, { level: "action", agent: agent.id, scope: id, msg: "Calling gemini-3.5-flash to decompose plan" });
+      // Simulate the run ticking forward
+      const tick = setInterval(() => {
+        const existing = (typeof window !== "undefined")
+          ? JSON.parse(window.localStorage.getItem(`echo.${userId}.runs`) ?? "[]")
+              .find((r: { id: string }) => r.id === id)
+          : null;
+        if (!existing) {
+          clearInterval(tick);
+          return;
+        }
+        const next = Math.min(100, (existing.progress ?? 0) + 10);
+        saveRun(userId, { ...existing, progress: next });
+        if (next >= 100) {
+          clearInterval(tick);
+          saveRun(userId, { ...existing, progress: 100, status: "completed", finishedAt: new Date().toISOString(), durationSec: 42 });
+          appendLog(userId, { level: "success", agent: "echo-manager", scope: id, msg: `Run ${id} completed` });
+          setPhase("completed");
+        } else {
+          appendLog(userId, { level: "info", agent: agent.id, scope: id, msg: `Processed ${next}% of inputs` });
+        }
+      }, 1500);
+    });
+  }
 }

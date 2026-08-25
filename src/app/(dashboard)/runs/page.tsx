@@ -1,79 +1,230 @@
-import { Button, FeatureTag, FeatureCard } from "@/components/ui";
+"use client";
 
-const runs = [
-  { id: "r_8421", skill: "RFP Response Drafting", input: "Acme Corp RFP Q3.pdf", status: "success", duration: "3m 42s", when: "2h ago", agent: "RFP Responder" },
-  { id: "r_8420", skill: "Inbox Triage", input: "47 emails", status: "success", duration: "1m 12s", when: "5m ago", agent: "Inbox Butler" },
-  { id: "r_8419", skill: "LinkedIn Lead Enricher", input: "12 leads", status: "success", duration: "4m 03s", when: "12m ago", agent: "Lead Enricher" },
-  { id: "r_8418", skill: "RFP Response Drafting", input: "scanned-form-2024.pdf", status: "failed", duration: "0m 8s", when: "2h ago", agent: "RFP Responder" },
-  { id: "r_8417", skill: "Weekly Report Generator", input: "Aug 14-20 metrics", status: "success", duration: "2m 41s", when: "1d ago", agent: "Weekly Reporter" },
-  { id: "r_8416", skill: "Social Media Scheduler", input: "blog-post-3.md", status: "review", duration: "0m 31s", when: "3d ago", agent: "Social Amplifier" },
-  { id: "r_8415", skill: "CSV Cleanup", input: "q3-export.csv", status: "success", duration: "0m 14s", when: "1d ago", agent: "CSV Cleaner" },
-  { id: "r_8414", skill: "HubSpot Lead Fetcher", input: "weekly sync", status: "success", duration: "0m 47s", when: "4d ago", agent: "Lead Enricher" },
-];
+import * as React from "react";
+import { Button, FeatureTag, FeatureCard } from "@/components/ui";
+import {
+  clearRuns,
+  getUserId,
+  listRuns,
+  type RunRecord,
+} from "@/lib/client/stores";
+
+const statusFilter = ["all", "success", "failed", "review", "running", "queued"] as const;
+type StatusFilter = (typeof statusFilter)[number];
+
+const variantByStatus: Record<RunRecord["status"], "mist-mint" | "desert-clay" | "iron" | "obsidian" | "wisteria"> = {
+  review: "desert-clay",
+  failed: "iron",
+  running: "wisteria",
+  queued: "obsidian",
+  completed: "mist-mint",
+};
+
+const POLL_MS = 1500;
+
+function relativeTime(iso: string): string {
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 5) return "just now";
+  if (diff < 60) return `${Math.floor(diff)}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function formatDuration(startedAt: string, finishedAt?: string) {
+  const end = finishedAt ? new Date(finishedAt).getTime() : Date.now();
+  const sec = Math.max(0, Math.floor((end - new Date(startedAt).getTime()) / 1000));
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}m ${String(s).padStart(2, "0")}s`;
+}
 
 export default function RunsPage() {
+  const userId = React.useMemo(getUserId, []);
+  const [runs, setRuns] = React.useState<RunRecord[]>([]);
+  const [filter, setFilter] = React.useState<StatusFilter>("all");
+  const [now, setNow] = React.useState(Date.now());
+
+  // Initial load + live polling
+  React.useEffect(() => {
+    setRuns(listRuns(userId));
+    const refresh = () => setRuns(listRuns(userId));
+    const id = setInterval(refresh, POLL_MS);
+    const onLocal = () => setRuns(listRuns(userId));
+    window.addEventListener("echo:store:runs", onLocal as EventListener);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("echo:store:runs", onLocal as EventListener);
+    };
+  }, [userId]);
+
+  // For "running" rows: re-render every second so the elapsed timer ticks
+  React.useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const counts = React.useMemo(() => {
+    const c = {
+      all: runs.length,
+      success: 0,
+      failed: 0,
+      review: 0,
+      running: 0,
+      queued: 0,
+    };
+    for (const r of runs) {
+      if (r.status === "completed") c.success += 1;
+      else if (r.status === "failed") c.failed += 1;
+      else if (r.status === "review") c.review += 1;
+      else if (r.status === "running") c.running += 1;
+      else if (r.status === "queued") c.queued += 1;
+    }
+    return c;
+  }, [runs, now]);
+
+  const visible = runs.filter((r) => {
+    if (filter === "all") return true;
+    if (filter === "success") return r.status === "completed";
+    if (filter === "review") return r.status === "review";
+    if (filter === "running") return r.status === "running";
+    if (filter === "queued") return r.status === "queued";
+    if (filter === "failed") return r.status === "failed";
+    return true;
+  });
+
+  const exportCsv = () => {
+    if (typeof window === "undefined") return;
+    const header = ["run_id", "skill", "status", "total_inputs", "progress", "started_at", "finished_at", "duration_sec"];
+    const rows = visible.map((r) => [
+      r.id,
+      r.skillName ?? r.skillId,
+      r.status,
+      r.totalInputs,
+      r.progress,
+      r.startedAt,
+      r.finishedAt ?? "",
+      r.durationSec ?? "",
+    ]);
+    const csv = [header, ...rows]
+      .map((cells) => cells.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `echo-runs-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="page-container py-10">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8">
         <div>
           <p className="text-caption text-obsidian/50 mb-2">History</p>
           <h1 className="text-display-md font-bold">All runs</h1>
-          <p className="mt-2 text-body text-obsidian/70">
-            390 total · 376 success · 8 failed · 6 needs review
+          <p className="mt-2 text-body text-obsidian/70 tabular-nums">
+            {counts.all} total · {counts.success} completed · {counts.failed} failed · {counts.review} needs review ·{" "}
+            {counts.running + counts.queued} in flight
           </p>
         </div>
-        <Button variant="outline-light" size="md">↓ Export CSV</Button>
+        <div className="flex gap-2">
+          <Button variant="outline-light" size="md" onClick={exportCsv}>
+            ↓ Export CSV
+          </Button>
+          {runs.length > 0 && (
+            <Button
+              variant="outline-light"
+              size="md"
+              onClick={() => {
+                if (confirm("Clear all run history? This cannot be undone.")) clearRuns(userId);
+              }}
+            >
+              Clear
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2 mb-6">
-        <FeatureTag variant="obsidian">All · 390</FeatureTag>
-        <FeatureTag variant="iron">Success</FeatureTag>
-        <FeatureTag variant="iron">Failed</FeatureTag>
-        <FeatureTag variant="iron">Needs review</FeatureTag>
-        <FeatureTag variant="iron">Today</FeatureTag>
-        <FeatureTag variant="iron">This week</FeatureTag>
+        {statusFilter.map((s) => (
+          <button
+            key={s}
+            onClick={() => setFilter(s)}
+            className={`px-3 py-1.5 rounded-full text-caption font-medium transition-colors ${
+              filter === s ? "bg-obsidian text-paper-white" : "bg-bone text-obsidian hover:bg-iron"
+            }`}
+          >
+            {s} · {counts[s]}
+          </button>
+        ))}
       </div>
 
-      <FeatureCard surface="paper-white" padding="md" className="hairline overflow-hidden">
-        <table className="w-full text-left">
-          <thead>
-            <tr className="border-b border-iron">
-              <th className="text-caption font-medium uppercase opacity-60 py-3">Run</th>
-              <th className="text-caption font-medium uppercase opacity-60 py-3">Skill</th>
-              <th className="text-caption font-medium uppercase opacity-60 py-3">Input</th>
-              <th className="text-caption font-medium uppercase opacity-60 py-3">Status</th>
-              <th className="text-caption font-medium uppercase opacity-60 py-3">Agent</th>
-              <th className="text-caption font-medium uppercase opacity-60 py-3">Duration</th>
-              <th className="text-caption font-medium uppercase opacity-60 py-3">When</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.map((run) => (
-              <tr key={run.id} className="border-b border-iron last:border-0 hover:bg-bone/50">
-                <td className="py-3 text-caption font-mono">{run.id}</td>
-                <td className="py-3 text-body-sm font-medium">{run.skill}</td>
-                <td className="py-3 text-body-sm text-obsidian/70">{run.input}</td>
-                <td className="py-3">
-                  <FeatureTag
-                    variant={
-                      run.status === "success"
-                        ? "mist-mint"
-                        : run.status === "review"
-                          ? "desert-clay"
-                          : "iron"
-                    }
-                  >
-                    {run.status}
-                  </FeatureTag>
-                </td>
-                <td className="py-3 text-body-sm text-obsidian/70">{run.agent}</td>
-                <td className="py-3 text-body-sm tabular-nums">{run.duration}</td>
-                <td className="py-3 text-caption text-obsidian/60">{run.when}</td>
+      {visible.length === 0 ? (
+        <FeatureCard surface="paper-white" padding="lg" className="hairline text-center">
+          <p className="text-body text-obsidian/60">
+            {runs.length === 0
+              ? "No runs yet. Hit \u201cRun now\u201d on any skill, or compose a new agent in the Composer."
+              : "No runs match this filter."}
+          </p>
+        </FeatureCard>
+      ) : (
+        <FeatureCard surface="paper-white" padding="md" className="hairline overflow-hidden">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-iron">
+                <th className="text-caption font-medium uppercase opacity-60 py-3">Run</th>
+                <th className="text-caption font-medium uppercase opacity-60 py-3">Skill</th>
+                <th className="text-caption font-medium uppercase opacity-60 py-3">Inputs</th>
+                <th className="text-caption font-medium uppercase opacity-60 py-3">Status</th>
+                <th className="text-caption font-medium uppercase opacity-60 py-3">Progress</th>
+                <th className="text-caption font-medium uppercase opacity-60 py-3">Duration</th>
+                <th className="text-caption font-medium uppercase opacity-60 py-3">When</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </FeatureCard>
+            </thead>
+            <tbody>
+              {visible.map((run) => (
+                <tr key={run.id} className="border-b border-iron last:border-0 hover:bg-bone/50">
+                  <td className="py-3 text-caption font-mono">{run.id.slice(0, 14)}</td>
+                  <td className="py-3 text-body-sm font-medium">{run.skillName ?? run.skillId}</td>
+                  <td className="py-3 text-body-sm text-obsidian/70 tabular-nums">{run.totalInputs}</td>
+                  <td className="py-3">
+                    <FeatureTag variant={variantByStatus[run.status]}>
+                      {run.status === "running" || run.status === "queued" ? "● " : ""}
+                      {run.status}
+                    </FeatureTag>
+                  </td>
+                  <td className="py-3">
+                    {run.status === "running" || run.status === "queued" ? (
+                      <div className="flex items-center gap-2 w-32">
+                        <div className="flex-1 h-1.5 bg-iron rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-obsidian transition-all duration-300"
+                            style={{ width: `${Math.min(100, run.progress)}%` }}
+                          />
+                        </div>
+                        <span className="text-caption tabular-nums text-obsidian/60 w-8 text-right">
+                          {Math.min(100, run.progress)}%
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-caption text-obsidian/50">—</span>
+                    )}
+                  </td>
+                  <td className="py-3 text-body-sm tabular-nums text-obsidian/70">
+                    {formatDuration(run.startedAt, run.finishedAt)}
+                  </td>
+                  <td className="py-3 text-caption text-obsidian/60">{relativeTime(run.startedAt)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </FeatureCard>
+      )}
     </div>
   );
 }

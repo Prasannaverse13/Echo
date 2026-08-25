@@ -1,8 +1,8 @@
 "use client";
 
 import { motion, useInView } from "framer-motion";
-import { ArrowRight, ArrowUpRight } from "lucide-react";
-import { useRef } from "react";
+import { ArrowRight, Volume2, VolumeX } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 /* ---------------- WordsPullUp ---------------- */
 interface WordsPullUpProps {
@@ -217,8 +217,13 @@ export const EchoHero = () => {
                 initial={{ y: 20, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
                 transition={{ duration: 0.8, delay: 0.5, ease: [0.16, 1, 0.3, 1] }}
-                className="text-xs sm:text-sm md:text-base"
-                style={{ color: "#FFFFFF", lineHeight: 1.25 }}
+                className="text-sm sm:text-base md:text-lg font-semibold"
+                style={{
+                  color: "#FFFFFF",
+                  lineHeight: 1.25,
+                  textShadow:
+                    "0 1px 2px rgba(0,0,0,0.7), 0 2px 18px rgba(0,0,0,0.55)",
+                }}
               >
                 Show it once. Run it forever. Echo watches you do a workflow
                 on your screen, then re-runs it autonomously across thousands
@@ -245,33 +250,122 @@ export const EchoHero = () => {
                     />
                   </span>
                 </a>
-                <a
-                  href="/app/compose"
-                  className="group inline-flex items-center gap-2 self-start rounded-full border border-paper-white/30 bg-obsidian/30 backdrop-blur-sm py-2 px-5 text-sm font-medium text-paper-white transition-all hover:bg-obsidian/50 sm:text-base"
-                >
-                  See it compose
-                  <ArrowUpRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
-                </a>
               </motion.div>
             </div>
           </div>
         </div>
 
-        {/* Bottom-left badge — the "All Things Agentic Hackathon" tag */}
-        <motion.div
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ duration: 0.8, delay: 1.0, ease: [0.16, 1, 0.3, 1] }}
-          className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 hidden md:block"
-        >
-          <div className="flex items-center gap-2 rounded-full bg-obsidian/80 backdrop-blur-md border border-paper-white/20 px-3 py-1.5 text-caption text-paper-white/90 shadow-lg">
-            <span className="w-1.5 h-1.5 rounded-full bg-slate-teal animate-pulse" />
-            All Things Agentic Hackathon · 2026
-          </div>
-        </motion.div>
+        {/* Ambient wind + birdsong loop with mute toggle.
+            CC0 audio: https://bigsoundbank.com/wind-in-a-tree-s0659.html (Wind in a Tree, by Joseph Sardin). */}
+        <AmbientBacksound />
+
       </div>
     </section>
   );
 };
+
+/* ---------------- Ambient backsound ----------------
+   Loops a short wind + birdsong track so the hero feels like a real outdoor
+   workspace. Browsers block autoplay until the user interacts with the page,
+   so we (a) only attempt playback after the first click/scroll/tap, and
+   (b) fall back gracefully — a small glass pill in the corner shows the
+   current state and lets the user mute / unmute at any time. The choice is
+   persisted in localStorage so the hero stays quiet on subsequent visits
+   for users who don't want sound.
+*/
+function AmbientBacksound() {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [unlocked, setUnlocked] = useState(false);
+  const [muted, setMuted] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem("echo.ambient.muted") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [playing, setPlaying] = useState(false);
+
+  // After the user's first interaction, try to unlock playback
+  useEffect(() => {
+    if (unlocked) return;
+    const tryPlay = () => {
+      const el = audioRef.current;
+      if (!el) return;
+      el.volume = 0.18; // quiet by default — it's ambience, not a soundtrack
+      el.loop = true;
+      el.play()
+        .then(() => {
+          setPlaying(true);
+          if (muted) {
+            el.muted = true;
+          }
+        })
+        .catch(() => {
+          // autoplay blocked; user can still hit the unmute pill
+        });
+      setUnlocked(true);
+      window.removeEventListener("pointerdown", tryPlay);
+      window.removeEventListener("keydown", tryPlay);
+    };
+    window.addEventListener("pointerdown", tryPlay, { once: true, passive: true });
+    window.addEventListener("keydown", tryPlay, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", tryPlay);
+      window.removeEventListener("keydown", tryPlay);
+    };
+  }, [unlocked, muted]);
+
+  // React to mute toggle
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el) return;
+    el.muted = muted;
+    try {
+      window.localStorage.setItem("echo.ambient.muted", muted ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [muted]);
+
+  return (
+    <>
+      <audio
+        ref={audioRef}
+        src="/echo-ambient.mp3"
+        preload="auto"
+        loop
+        muted={muted}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+      />
+      <motion.button
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.6, delay: 1.2, ease: [0.16, 1, 0.3, 1] }}
+        onClick={() => setMuted((m) => !m)}
+        aria-label={muted ? "Unmute ambient sound" : "Mute ambient sound"}
+        className="absolute bottom-6 right-6 z-20 flex items-center gap-2 rounded-full border border-paper-white/25 px-3 py-2 text-caption text-paper-white/90 shadow-lg hover:scale-105 transition-transform"
+        style={{
+          background:
+            "linear-gradient(135deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.10) 100%)",
+          backdropFilter: "blur(24px) saturate(180%)",
+          WebkitBackdropFilter: "blur(24px) saturate(180%)",
+          boxShadow:
+            "0 8px 32px 0 rgba(0,0,0,0.18), inset 0 1px 0 0 rgba(255,255,255,0.25)",
+        }}
+      >
+        {muted || !playing ? (
+          <VolumeX className="w-3.5 h-3.5" />
+        ) : (
+          <Volume2 className="w-3.5 h-3.5" />
+        )}
+        <span className="font-medium">
+          {muted ? "Sound off" : playing ? "Ambient on" : "Tap for sound"}
+        </span>
+      </motion.button>
+    </>
+  );
+}
 
 export default EchoHero;
