@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isGcpAvailable, writeDoc } from "@/lib/gcp";
-import { generateJson } from "@/lib/genai";
+import { generateJson, generateJsonWithImages } from "@/lib/genai";
 
 /**
  * POST /api/skills/reconstruct
@@ -49,10 +49,84 @@ Keep steps between 3-7. Be specific and actionable. Use realistic MM:SS timestam
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  const { frameCount = 24, durationSec = 64 } = body;
+  const { frameCount = 24, durationSec = 64, frames } = body as {
+    frameCount?: number;
+    durationSec?: number;
+    frames?: string[];
+  };
 
-  // Try Gemini via Vertex AI (uses GCP billing) or AI Studio (uses API key)
-  const prompt = `${RECONSTRUCTION_PROMPT}\n\nThe recording captured ${frameCount} frames over ${durationSec} seconds. The user demonstrated a workflow on their screen.`;
+  // If we got real frames, send them to Gemini as actual images. The prompt
+  // tells Gemini that these are sequential screenshots of a workflow the
+  // user just performed, and asks it to extract the steps. If we don't have
+  // real frames (legacy / pre-multimodal client), fall back to the text-only
+  // path which is functionally a no-op (Gemini has nothing to look at).
+  const realFrames = Array.isArray(frames)
+    ? frames
+        .filter((f): f is string => typeof f === "string" && f.length > 0)
+        .map((f) => {
+          // Accept both "data:image/jpeg;base64,XXX" and bare "XXX" inputs.
+          const m = /^data:([^;]+);base64,(.*)$/.exec(f);
+          return m
+            ? { mimeType: m[1], data: m[2] }
+            : { mimeType: "image/jpeg", data: f };
+        })
+    : [];
+
+  const prompt = `${RECONSTRUCTION_PROMPT}\n\nThe recording captured ${realFrames.length || frameCount} frames over ${durationSec} seconds. ${
+    realFrames.length > 0
+      ? "The images are attached in chronological order. Analyze them to reconstruct the workflow the user actually performed on their screen."
+      : "The user demonstrated a workflow on their screen (no frames are attached, so infer a plausible workflow from the metadata alone)."
+  }`;
+
+  // Strict multimodal path when we have real frames. If Gemini fails, the
+  // route surfaces a 502 so the client can show a real error and let the
+  // user type the skill manually. We do NOT silently fall back to a mock
+  // when the user has provided real screen-capture data.
+  if (realFrames.length > 0) {
+    const result = await generateJsonWithImages({
+      model: "gemini-2.5-flash",
+      prompt,
+      temperature: 0.4,
+      images: realFrames,
+    });
+    if (result?.text) {
+      try {
+        const parsed = JSON.parse(result.text) as ReconstructedSkill;
+        writeDoc("skills", undefined, parsed as unknown as Record<string, unknown>).catch(
+          () => undefined
+        );
+        return NextResponse.json({
+          ok: true,
+          source: result.source,
+          frameCount: realFrames.length,
+          ...parsed,
+        });
+      } catch (err) {
+        console.error("[reconstruct] Gemini multimodal parse failed:", err);
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "Gemini returned a non-JSON response. The model saw your frames but couldn't extract structured steps. Try re-recording with a clearer screen, or fill the skill in by hand.",
+          },
+          { status: 502 }
+        );
+      }
+    }
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "Gemini didn't return a response. Check GEMINI_API_KEY, GCP credentials, and the model's availability. The frames were not analyzed.",
+      },
+      { status: 502 }
+    );
+  }
+
+  // Text-only fallback (legacy / no frames provided). Gemini has no actual
+  // images to look at here, so this is effectively a no-op — the prompt
+  // alone is not enough to reconstruct a workflow. We keep it so the
+  // endpoint still returns *something* for old clients.
   const result = await generateJson({
     model: "gemini-2.5-flash",
     prompt,
@@ -61,13 +135,16 @@ export async function POST(req: NextRequest) {
   if (result?.text) {
     try {
       const parsed = JSON.parse(result.text) as ReconstructedSkill;
-      // Best-effort persist to Firestore (non-blocking)
-      writeDoc(
-        "skills",
-        undefined,
-        parsed as unknown as Record<string, unknown>
-      ).catch(() => undefined);
-      return NextResponse.json({ ok: true, source: result.source, ...parsed });
+      writeDoc("skills", undefined, parsed as unknown as Record<string, unknown>).catch(
+        () => undefined
+      );
+      return NextResponse.json({
+        ok: true,
+        source: result.source,
+        frameCount: 0,
+        warning: "no_frames_provided",
+        ...parsed,
+      });
     } catch (err) {
       console.error("[reconstruct] Gemini response parse failed, falling back to mock:", err);
     }

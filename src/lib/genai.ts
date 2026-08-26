@@ -17,6 +17,13 @@ type GenerateArgs = {
   responseMimeType?: "application/json" | "text/plain";
   temperature?: number;
   maxOutputTokens?: number;
+  /**
+   * Optional inline images for multimodal calls. Each entry is a base64
+   * string (no "data:" prefix) and its MIME type (usually "image/jpeg"
+   * or "image/png"). When provided, the request goes through Gemini's
+   * multimodal `contents[].parts` shape.
+   */
+  images?: Array<{ mimeType: string; data: string }>;
 };
 
 type GenerateResult = { text: string; source: "vertex" | "aistudio" };
@@ -59,8 +66,14 @@ async function tryVertexOnce(modelName: string, args: GenerateArgs): Promise<Gen
         maxOutputTokens: args.maxOutputTokens ?? 4096,
       },
     });
+    const parts: unknown[] = [{ text: args.prompt }];
+    if (args.images && args.images.length > 0) {
+      for (const img of args.images) {
+        parts.push({ inline_data: { mime_type: img.mimeType, data: img.data } });
+      }
+    }
     const r = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: args.prompt }] }],
+      contents: [{ role: "user", parts: parts as never[] }],
     });
     const text = r.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
     if (!text) return null;
@@ -77,9 +90,17 @@ async function tryAIStudioOnce(modelName: string, args: GenerateArgs): Promise<G
   try {
     const { GoogleGenAI } = await import("@google/genai");
     const genai = new GoogleGenAI({ apiKey });
+    const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [
+      { text: args.prompt },
+    ];
+    if (args.images && args.images.length > 0) {
+      for (const img of args.images) {
+        parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
+      }
+    }
     const r = await genai.models.generateContent({
       model: modelName,
-      contents: [{ role: "user", parts: [{ text: args.prompt }] }],
+      contents: [{ role: "user", parts }],
       config: {
         responseMimeType: args.responseMimeType,
         temperature: args.temperature ?? 0.4,
@@ -90,7 +111,7 @@ async function tryAIStudioOnce(modelName: string, args: GenerateArgs): Promise<G
     if (!text) return null;
     return { text, source: "aistudio" };
   } catch (e) {
-    console.warn("[genai] aistudio/" + modelName + " failed:", (e as Error).message?.slice(0, 120));
+    console.warn("[genai] aiststudio/" + modelName + " failed:", (e as Error).message?.slice(0, 120));
     return null;
   }
 }
@@ -186,4 +207,24 @@ export async function generateJson(
     }
   }
   return ai ?? vertex;
+}
+
+/**
+ * Strict multimodal call. Same fallback chain as `generateJson` (AI Studio
+ * first, Vertex AI second) but requires the caller to pass actual images
+ * and returns `null` on any failure — never a mock. This is the path the
+ * Record page uses: if Gemini can't analyze the captured frames, the
+ * caller (the API route) surfaces the error to the client so the user
+ * can fall back to manual skill creation.
+ */
+export async function generateJsonWithImages(
+  args: Omit<GenerateArgs, "responseMimeType" | "images"> & {
+    responseMimeType?: "application/json";
+    images: Array<{ mimeType: string; data: string }>;
+  }
+): Promise<GenerateResult | null> {
+  if (!args.images || args.images.length === 0) {
+    throw new Error("generateJsonWithImages requires at least one image");
+  }
+  return generateJson(args);
 }

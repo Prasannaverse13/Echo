@@ -117,8 +117,17 @@ export default function RecordPage() {
     const canvas = canvasRef.current;
     if (video.videoWidth === 0) return;
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    // Downscale to a fixed width so the per-frame JPEG is small (~30-60KB
+    // at quality 0.6). 24 frames * 50KB * 4/3 base64 = ~1.6MB total —
+    // comfortably under Vercel's 4.5MB request body limit. Gemini still
+    // sees plenty of detail to identify UI elements, text, and clicks.
+    const TARGET_WIDTH = 640;
+    const targetHeight = Math.max(
+      1,
+      Math.round((video.videoHeight * TARGET_WIDTH) / video.videoWidth)
+    );
+    canvas.width = TARGET_WIDTH;
+    canvas.height = targetHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -131,8 +140,35 @@ export default function RecordPage() {
         }
       },
       "image/jpeg",
-      0.7
+      0.6
     );
+  };
+
+  // Convert an array of JPEG Blobs to base64 data URLs, in parallel.
+  // Throws if any blob fails to read.
+  const blobsToDataUrls = (blobs: Blob[]): Promise<string[]> =>
+    Promise.all(
+      blobs.map(
+        (b) =>
+          new Promise<string>((resolve, reject) => {
+            const r = new FileReader();
+            r.onload = () => resolve(String(r.result));
+            r.onerror = () => reject(r.error || new Error("FileReader failed"));
+            r.readAsDataURL(b);
+          })
+      )
+    );
+
+  // Evenly sample `n` items from a list (always includes first and last).
+  const sampleEvenly = <T,>(items: T[], n: number): T[] => {
+    if (items.length <= n) return items.slice();
+    if (n <= 1) return [items[0]];
+    const out: T[] = [];
+    for (let i = 0; i < n; i++) {
+      const idx = Math.round((i * (items.length - 1)) / (n - 1));
+      out.push(items[idx]);
+    }
+    return out;
   };
 
   const stopAndLearn = async () => {
@@ -155,22 +191,30 @@ export default function RecordPage() {
     }
 
     setPhase("uploading");
-    // Brief upload phase for UX feedback
-    await new Promise((r) => setTimeout(r, 600));
-    setPhase("learning");
-
+    setError(null);
     try {
+      // Resample to 24 frames (or fewer if the recording was short). Each
+      // frame is already a ~30-60KB JPEG, so the total body stays under
+      // Vercel's 4.5MB request limit even for 5-minute recordings.
+      const MAX_FRAMES = 24;
+      const sampled = sampleEvenly(frameBlobsRef.current, MAX_FRAMES);
+      const dataUrls = await blobsToDataUrls(sampled);
+      setPhase("learning");
       const res = await fetch("/api/skills/reconstruct", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          frameCount: frameBlobsRef.current.length,
+          frameCount: sampled.length,
           durationSec: elapsed,
+          frames: dataUrls,
         }),
       });
 
       if (!res.ok) {
-        throw new Error(`Reconstruction failed: ${res.status}`);
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(
+          errBody?.error || `Reconstruction failed: HTTP ${res.status}`
+        );
       }
 
       const data = await res.json();
@@ -185,6 +229,7 @@ export default function RecordPage() {
           : "Echo couldn't reconstruct this skill. Please try again."
       );
       setPhase("idle");
+      setElapsed(0);
     }
   };
 
