@@ -65,9 +65,37 @@ export function AppShell({
           >
             Echo
           </Link>
-          <p className="text-caption text-obsidian/50 mt-1">
-            {session.name}
-          </p>
+          <div className="flex items-center gap-2 mt-1">
+            {session.picture ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={session.picture}
+                alt=""
+                className="w-5 h-5 rounded-full"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <span className="w-5 h-5 rounded-full bg-obsidian/10 text-obsidian text-[10px] font-bold flex items-center justify-center">
+                {session.name
+                  .split(" ")
+                  .map((n) => n[0])
+                  .slice(0, 2)
+                  .join("")
+                  .toUpperCase()}
+              </span>
+            )}
+            <p className="text-caption text-obsidian/50 truncate">
+              {session.name}
+            </p>
+            {session.provider === "google" && (
+              <span
+                title="Signed in with Google"
+                className="text-[10px] font-bold text-obsidian/40 border border-obsidian/15 rounded-full px-1.5 py-0.5 leading-none"
+              >
+                G
+              </span>
+            )}
+          </div>
         </div>
 
         <nav className="flex-1 overflow-y-auto p-4 space-y-6">

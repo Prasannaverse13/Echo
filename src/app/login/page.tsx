@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, NavBar, Footer, FeatureTag } from "@/components/ui";
 import { PasswordInput } from "@/components/ui/PasswordInput";
+import { GoogleButton } from "@/components/auth/GoogleButton";
 import {
   login,
   getSession,
@@ -166,6 +167,19 @@ export default function LoginPage() {
                 {busy ? "Signing in…" : "Sign in →"}
               </Button>
             </form>
+
+            <div className="my-6 flex items-center gap-3 text-caption text-obsidian/40">
+              <div className="flex-1 h-px bg-iron" />
+              or
+              <div className="flex-1 h-px bg-iron" />
+            </div>
+
+            <GoogleButton intent="signin" />
+
+            <p className="mt-3 text-center text-caption text-obsidian/40">
+              You'll stay signed in. Echo remembers you across browser
+              restarts.
+            </p>
 
             <p className="mt-8 text-center text-body-sm text-obsidian/60">
               New to Echo?{" "}
