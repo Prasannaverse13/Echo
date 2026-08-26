@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
   // Try Gemini via Vertex AI or AI Studio
   const prompt = `${COMPOSE_PROMPT}\n\nGOAL: ${body.goal}\n\nSKILL LIBRARY:\n${library.map((s) => `- ${s.name}: ${s.description}`).join("\n")}`;
   const result = await generateJson({
-    model: "gemini-2.5-flash",
+    model: "gemini-3.5-flash",
     prompt,
     temperature: 0.3,
   });

@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
     const prompt = `${RECONSTRUCTION_PROMPT}\n\nThe attached file is a ${durationSec || "?"}-second screen recording of a workflow the user just performed. Watch the whole video carefully and extract the ordered steps, the intent, the right name, and the integrations involved. Be specific about what the user clicked, typed, and where the data went.`;
 
     const result = await generateJsonWithImages({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.5-flash",
       prompt,
       temperature: 0.4,
       images: [
@@ -153,7 +153,7 @@ export async function POST(req: NextRequest) {
   // when the user has provided real screen-capture data.
   if (realFrames.length > 0) {
     const result = await generateJsonWithImages({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.5-flash",
       prompt,
       temperature: 0.4,
       images: realFrames,
@@ -197,7 +197,7 @@ export async function POST(req: NextRequest) {
   // not enough to reconstruct a workflow. We keep it so the endpoint
   // still returns *something* for old clients.
   const result = await generateJson({
-    model: "gemini-2.5-flash",
+    model: "gemini-3.5-flash",
     prompt,
     temperature: 0.4,
   });

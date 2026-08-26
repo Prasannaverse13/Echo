@@ -45,21 +45,23 @@ let _vertex: import("@google-cloud/vertexai").VertexAI | null = null;
 
 /**
  * Default model for plain-text calls. The Record page passes an
- * explicit `args.model` ("gemini-2.5-flash") so this is only the
- * default for callers that don't specify one (e.g. the agent
- * orchestrator's JSON extraction helper).
+ * explicit `args.model` so this is only the default for callers that
+ * don't specify one (e.g. the agent orchestrator's JSON extraction
+ * helper). Uses the latest AI Studio Flash tier — the 2.x family is
+ * no longer available to new users.
  */
-export const PREFERRED_MODEL = "gemini-2.5-flash";
+export const PREFERRED_MODEL = "gemini-3.5-flash";
 
 /**
  * Hard-coded fallback list. The caller's `args.model` is tried first;
  * these are tried only if it fails. Keep this list small and only
- * include model names that are GA on AI Studio today.
+ * include model names that are GA on AI Studio today (Aug 2026+).
+ * The 2.x family is sunset for new users, so we live on the 3.x line.
  */
 const FALLBACK_MODELS: { model: string; source: "vertex" | "aistudio" }[] = [
-  { model: "gemini-2.5-flash", source: "aistudio" },
-  { model: "gemini-2.0-flash", source: "aistudio" },
-  { model: "gemini-2.5-flash-lite", source: "aistudio" },
+  { model: "gemini-3.5-flash", source: "aistudio" },
+  { model: "gemini-3.6-flash", source: "aistudio" },
+  { model: "gemini-3.5-flash-lite", source: "aistudio" },
 ];
 
 /**
