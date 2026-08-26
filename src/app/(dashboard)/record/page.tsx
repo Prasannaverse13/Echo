@@ -58,21 +58,41 @@ export default function RecordPage() {
     try {
       // Browser screen capture — works in any modern browser on Mac, Windows, Linux
       const mediaStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          frameRate: 1,
-          displaySurface: "browser", // prefer browser tab, fall back to window/screen
-        },
+        // No `displaySurface` or `preferCurrentTab` here — forcing the
+        // current tab creates a feedback loop where the video element is
+        // trying to display the very stream it's being captured from, and
+        // Chrome blanks it out (resulting in all-black frames). Letting the
+        // user pick any tab/window/screen via the native picker avoids this.
+        video: { frameRate: 1 },
         audio: false,
-        ...({
-          preferCurrentTab: true,
-          selfBrowserSurface: "include",
-        } as object),
       });
 
       setStream(mediaStream);
       if (videoRef.current) {
+        videoRef.current.muted = true;
+        videoRef.current.playsInline = true;
         videoRef.current.srcObject = mediaStream;
-        await videoRef.current.play();
+        // Wait until the video element actually has dimensions before
+        // considering the stream "ready" — otherwise the first captureFrame
+        // calls find videoWidth === 0 and bail.
+        await new Promise<void>((resolve) => {
+          const v = videoRef.current!;
+          if (v.videoWidth > 0 && v.videoHeight > 0) {
+            resolve();
+            return;
+          }
+          const onMeta = () => {
+            v.removeEventListener("loadedmetadata", onMeta);
+            resolve();
+          };
+          v.addEventListener("loadedmetadata", onMeta);
+          v.play().catch(() => undefined);
+          // Hard timeout: 2s is enough for the native picker to land a frame.
+          setTimeout(() => {
+            v.removeEventListener("loadedmetadata", onMeta);
+            resolve();
+          }, 2000);
+        });
       }
 
       // Detect when user clicks "Stop sharing" in browser UI
@@ -86,6 +106,7 @@ export default function RecordPage() {
       setElapsed(0);
       setFrames(0);
       frameBlobsRef.current = [];
+      blackFrameCheckRef.current = 0;
 
       // Capture a frame every 2 seconds while recording
       captureIntervalRef.current = setInterval(() => {
@@ -115,7 +136,7 @@ export default function RecordPage() {
     if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (video.videoWidth === 0) return;
+    if (video.videoWidth === 0 || video.videoHeight === 0) return;
 
     // Downscale to a fixed width so the per-frame JPEG is small (~30-60KB
     // at quality 0.6). 24 frames * 50KB * 4/3 base64 = ~1.6MB total —
@@ -143,6 +164,76 @@ export default function RecordPage() {
       0.6
     );
   };
+
+  /**
+   * Compute the mean luma (0-255) of the most recent captured frame.
+   * Returns null if there are no frames yet, or if the frame is in a
+   * format that doesn't expose ImageData. Used to detect "all-black"
+   * captures (the user shared a tab that's mostly dark, or the screen
+   * capture is returning a black surface for some reason).
+   */
+  const computeRecentFrameLuma = (): number | null => {
+    if (!canvasRef.current) return null;
+    const ctx = canvasRef.current.getContext("2d");
+    if (!ctx) return null;
+    try {
+      const w = canvasRef.current.width;
+      const h = canvasRef.current.height;
+      if (w === 0 || h === 0) return null;
+      const data = ctx.getImageData(0, 0, w, h).data;
+      let sum = 0;
+      // Sample every 32nd pixel for speed (still ~2k samples on a 640x360).
+      for (let i = 0; i < data.length; i += 32 * 4) {
+        // Rec. 601 luma
+        sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      }
+      const samples = Math.floor(data.length / (32 * 4));
+      return samples > 0 ? sum / samples : null;
+    } catch {
+      // getImageData can throw if the canvas is tainted (cross-origin
+      // MediaStream). In that case we can't tell — return null.
+      return null;
+    }
+  };
+
+  /**
+   * Background watcher: every 2s while recording, if the most recent
+   * captured frame is essentially all black (mean luma < 10/255) and
+   * we've already captured 2+ frames, surface a warning. After 6s of
+   * consistently black frames, auto-stop and tell the user the screen
+   * capture came back blank.
+   */
+  const blackFrameCheckRef = React.useRef(0);
+  React.useEffect(() => {
+    if (phase !== "recording") return;
+    const t = setInterval(() => {
+      if (frameBlobsRef.current.length < 2) return;
+      const luma = computeRecentFrameLuma();
+      if (luma === null) return; // tainted canvas or no data
+      if (luma < 10) {
+        blackFrameCheckRef.current += 1;
+        if (blackFrameCheckRef.current === 2) {
+          setError(
+            "The captured frames are coming back black. Pick a different tab or window, or use Create by hand on the right."
+          );
+        } else if (blackFrameCheckRef.current >= 3) {
+          // After 6s of black frames, give up and return to idle.
+          stopAndLearn();
+        }
+      } else {
+        // Got a real frame — clear the counter.
+        blackFrameCheckRef.current = 0;
+        if (luma < 25) {
+          // Dim but not black — don't error, but warn so the user knows.
+          setError(
+            "Heads up: the captured frames are quite dim. If the workflow isn't visible, pick a brighter tab or window."
+          );
+        }
+      }
+    }, 2000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   // Convert an array of JPEG Blobs to base64 data URLs, in parallel.
   // Throws if any blob fails to read.
