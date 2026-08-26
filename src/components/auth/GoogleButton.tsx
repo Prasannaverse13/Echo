@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   signInWithGoogleProfile,
   getGoogleClientId,
@@ -52,8 +52,12 @@ type Gsi = {
     callback: (response: { credential: string }) => void;
     auto_select?: boolean;
     cancel_on_tap_outside?: boolean;
+    // Optional prompt-dismissed hook. The GSI docs call this
+    // `prompt_parent_id` + a "Cancel" callback that fires when the
+    // user dismisses the One Tap UI without selecting an account.
+    // (We register it on `prompt()` below via the global `gsi`.)
   }) => void;
-  prompt: () => void;
+  prompt: (notification?: (n: { isNotDisplayed: () => boolean; isSkippedMoment: () => boolean; isDismissedMoment: () => boolean; getDismissedReason: () => string | undefined }) => void) => void;
 };
 function readGsi(): Gsi | null {
   if (typeof window === "undefined") return null;
@@ -100,6 +104,16 @@ export function GoogleButton({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [clientId, setClientId] = useState<string | null>(null);
+  // Synchronous re-entry guard for gsi.prompt(): Chrome's FedCM
+  // implementation rejects any second `navigator.credentials.get`
+  // while a previous one is still outstanding ("Only one
+  // navigator.credentials.get request may be outstanding at one
+  // time"), so we must not call prompt() twice in a row. Using a
+  // ref (not state) makes the guard synchronous and immune to
+  // re-render ordering. We clear it when the GSI callback fires
+  // (sign-in succeeded) or when the user dismisses the prompt via
+  // the `cancel_on_tap_outside` callback below.
+  const promptInFlight = useRef(false);
 
   useEffect(() => {
     setClientId(getGoogleClientId());
@@ -135,12 +149,25 @@ export function GoogleButton({
 
   function onClick() {
     if (busy) return;
+    // Re-entry guard: if a previous gsi.prompt() is still pending
+    // in Chrome's FedCM queue, calling it again is a no-op (Chrome
+    // throws NotAllowedError). We swallow that case silently so the
+    // user can click again once the FedCM state clears.
+    if (promptInFlight.current) {
+      setError(
+        "Google sign-in is still finishing. If nothing appears, give it a second and try again."
+      );
+      return;
+    }
     setError(null);
     const gsi = readGsi();
     if (clientId && gsi) {
+      promptInFlight.current = true;
       gsi.initialize({
         client_id: clientId,
         callback: (response) => {
+          // Sign-in succeeded → clear guard and continue.
+          promptInFlight.current = false;
           const claims = decodeJwt<{
             sub?: string;
             email?: string;
@@ -159,7 +186,26 @@ export function GoogleButton({
           });
         },
       });
-      gsi.prompt();
+      gsi.prompt((notification) => {
+        // GSI calls this once it has decided whether to display the
+        // prompt. If the user dismisses the prompt, or if GSI
+        // decides not to display it (e.g. already signed in
+        // elsewhere on the device), free the guard so the user can
+        // try again. Otherwise the guard would stay locked until
+        // the next page navigation.
+        if (notification.isDismissedMoment() || notification.isNotDisplayed()) {
+          promptInFlight.current = false;
+          const reason = notification.getDismissedReason();
+          if (reason && reason !== "credential_returned") {
+            // Don't surface "credential_returned" — that's the
+            // success path that already cleared the guard in the
+            // callback above.
+            setError(
+              `Google didn't show the sign-in prompt (reason: ${reason}). Try again or use email + password.`
+            );
+          }
+        }
+      });
       return;
     }
     setShowPicker(true);
