@@ -74,10 +74,43 @@ export async function POST(req: NextRequest) {
   // happens across the whole clip, including motion, scrolling, and
   // hover state — none of which a frame-sampling approach can capture.
   if (typeof video === "string" && video.length > 0) {
-    const m = /^data:([^;]+);base64,(.*)$/.exec(video);
-    const videoData = m
-      ? { mimeType: m[1] || videoMimeType || "video/webm", data: m[2] }
-      : { mimeType: videoMimeType || "video/webm", data: video };
+    // Browser-recorded webm data URLs look like:
+    //   data:video/webm;codecs=vp9,opus;base64,XXX
+    // The MIME type can have parameters (e.g. `;codecs=vp9,opus`) BEFORE
+    // the `;base64,` marker. A naive `^data:([^;]+);base64,(.*)$` regex
+    // would fail to match (because `[^;]+` stops at the first `;` and
+    // then expects `;base64,`), and the whole "data:..." string would
+    // be sent as the base64 payload — which AI Studio then tries to
+    // decode and rejects with HTTP 400 "Base64 decoding failed for
+    // 'data:video/webm;codecs=vp9,opus;base64,'".
+    //
+    // Find the first `;base64,` marker, split the prefix into
+    // "data:" + MIME-with-params, and only send the suffix as base64.
+    // Then strip any codec parameter so the MIME we hand to Gemini is
+    // a clean type/subtype (e.g. "video/webm") — the @google/genai
+    // SDK does not understand the `;codecs=...` syntax.
+    const base64Idx = video.indexOf(";base64,");
+    let videoData: { mimeType: string; data: string };
+    if (video.startsWith("data:") && base64Idx > 5) {
+      const rawMime = video.slice(5, base64Idx); // e.g. "video/webm;codecs=vp9,opus"
+      const baseType = rawMime.split(";")[0].trim().toLowerCase();
+      videoData = {
+        mimeType: baseType || videoMimeType || "video/webm",
+        data: video.slice(base64Idx + ";base64,".length),
+      };
+    } else if (video.startsWith("data:") && video.includes(",")) {
+      // URL-encoded (non-base64) data URI fallback — shouldn't happen
+      // for our client but handle it defensively.
+      const commaIdx = video.indexOf(",");
+      const rawMime = video.slice(5, commaIdx);
+      const baseType = rawMime.split(";")[0].trim().toLowerCase();
+      videoData = {
+        mimeType: baseType || videoMimeType || "video/webm",
+        data: video.slice(commaIdx + 1),
+      };
+    } else {
+      videoData = { mimeType: videoMimeType || "video/webm", data: video };
+    }
 
     const prompt = `${RECONSTRUCTION_PROMPT}\n\nThe attached file is a ${durationSec || "?"}-second screen recording of a workflow the user just performed. Watch the whole video carefully and extract the ordered steps, the intent, the right name, and the integrations involved. Be specific about what the user clicked, typed, and where the data went.`;
 
@@ -129,15 +162,21 @@ export async function POST(req: NextRequest) {
 
   // ---- Frame path (legacy / fallback) ----
   // If we got real frames, send them to Gemini as actual images.
+  // Use the same `;base64,` search as the video path so we tolerate
+  // any MIME-type parameters a future client might add.
   const realFrames = Array.isArray(frames)
     ? frames
         .filter((f): f is string => typeof f === "string" && f.length > 0)
         .map((f) => {
+          const b64Idx = f.indexOf(";base64,");
+          if (f.startsWith("data:") && b64Idx > 5) {
+            const baseType = f.slice(5, b64Idx).split(";")[0].trim().toLowerCase();
+            return { mimeType: baseType || "image/jpeg", data: f.slice(b64Idx + ";base64,".length) };
+          }
           // Accept both "data:image/jpeg;base64,XXX" and bare "XXX" inputs.
-          const m = /^data:([^;]+);base64,(.*)$/.exec(f);
-          return m
-            ? { mimeType: m[1], data: m[2] }
-            : { mimeType: "image/jpeg", data: f };
+          const m = /^data:([^;,]+);base64,(.*)$/.exec(f);
+          if (m) return { mimeType: m[1], data: m[2] };
+          return { mimeType: "image/jpeg", data: f };
         })
     : [];
 
