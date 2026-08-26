@@ -30,12 +30,54 @@ const PROJECT_ID =
   process.env.NEXT_PUBLIC_GCP_PROJECT_ID ||
   "echo-hackathon-2026";
 
+/**
+ * Vercel has no metadata server and no `gcloud auth application-default
+ * login` cache, so ADC always fails there. The org policy also blocks
+ * creating JSON service-account keys. Skip GCP client init entirely on
+ * Vercel so the @google-cloud/firestore auth probe never throws an
+ * unhandled rejection (which would crash the serverless function with
+ * exit code 128 even though our try/catch returns the response).
+ */
+const IS_VERCEL = Boolean(process.env.VERCEL);
+
 let _firestore: Firestore | null = null;
 let _pubsub: PubSub | null = null;
 let _pubsubTopic: Topic | null = null;
 
 function isTruthy(v: string | undefined): boolean {
   return v === "1" || v === "true" || v === "yes";
+}
+
+// One-time process-level safety net. The @google-cloud/* modules
+// occasionally emit background auth-rejection promises that we can't
+// directly await. Swallow the known "no ADC on Vercel" class of
+// failure so it doesn't crash the Node process.
+if (typeof process !== "undefined" && !(globalThis as { __echo_unhandled_swallow?: boolean }).__echo_unhandled_swallow) {
+  (globalThis as { __echo_unhandled_swallow?: boolean }).__echo_unhandled_swallow = true;
+  process.on("unhandledRejection", (reason) => {
+    const msg = (() => {
+      try {
+        if (reason instanceof Error) return reason.message;
+        return String(reason ?? "");
+      } catch {
+        return "";
+      }
+    })();
+    if (
+      msg.includes("Could not load the default credentials") ||
+      msg.includes("All promises were rejected") ||
+      msg.includes("MetadataLookupWarning") ||
+      msg.includes("Unable to authenticate")
+    ) {
+      // Expected on Vercel — no ADC. Log once per process for diagnostics.
+      console.warn("[gcp] swallowed background auth rejection (no ADC):", msg.slice(0, 120));
+      return;
+    }
+    // For anything else, log loudly so it shows up in Vercel's runtime
+    // logs. Don't crash — Vercel already penalises unhandledRejection,
+    // but we want the diagnostic.
+    console.error("[unhandledRejection]", reason);
+  });
 }
 
 /**
@@ -93,6 +135,7 @@ export function getPubSubTopic(): Topic {
  * thrown — Echo's UI must keep working even if Pub/Sub is unavailable.
  */
 export async function publishRunEvent(payload: Record<string, unknown>): Promise<string | null> {
+  if (IS_VERCEL) return null;
   if (!isGcpAvailable()) return null;
   try {
     const topic = getPubSubTopic();
@@ -118,6 +161,8 @@ export async function writeDoc(
   id: string | undefined,
   data: Record<string, unknown>
 ): Promise<string | null> {
+  // Short-circuit on Vercel — no ADC available, no point trying.
+  if (IS_VERCEL) return null;
   if (!isGcpAvailable()) return null;
   try {
     const db = getFirestore();
