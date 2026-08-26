@@ -143,7 +143,11 @@ export default function RecordPage() {
         try {
           const recorder = new MediaRecorder(mediaStream, {
             mimeType: pickedMime,
-            videoBitsPerSecond: 250_000, // 250 kbps — keeps a 60s clip under 2 MB
+            // 150 kbps — a 60s screen recording lands at ~1.1 MB, well under
+            // Vercel's 4.5MB request body limit even with base64 inflation.
+            // Screen captures compress well at this rate because most of
+            // the frame is static UI chrome.
+            videoBitsPerSecond: 150_000,
           });
           mediaRecorderRef.current = recorder;
           const chunks: Blob[] = [];

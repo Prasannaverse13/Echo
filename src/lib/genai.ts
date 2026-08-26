@@ -84,6 +84,23 @@ async function tryVertexOnce(modelName: string, args: GenerateArgs): Promise<Gen
   }
 }
 
+// Hard cap on a single Gemini call so a stalled request can't burn the
+// whole serverless function budget. 50s leaves headroom under the 60s
+// Vercel ceiling.
+const GEMINI_TIMEOUT_MS = 50_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`${label} timed out after ${ms}ms`)),
+        ms
+      )
+    ),
+  ]);
+}
+
 async function tryAIStudioOnce(modelName: string, args: GenerateArgs): Promise<GenerateResult | null> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
@@ -98,15 +115,19 @@ async function tryAIStudioOnce(modelName: string, args: GenerateArgs): Promise<G
         parts.push({ inlineData: { mimeType: img.mimeType, data: img.data } });
       }
     }
-    const r = await genai.models.generateContent({
-      model: modelName,
-      contents: [{ role: "user", parts }],
-      config: {
-        responseMimeType: args.responseMimeType,
-        temperature: args.temperature ?? 0.4,
-        maxOutputTokens: args.maxOutputTokens ?? 4096,
-      },
-    });
+    const r = await withTimeout(
+      genai.models.generateContent({
+        model: modelName,
+        contents: [{ role: "user", parts }],
+        config: {
+          responseMimeType: args.responseMimeType,
+          temperature: args.temperature ?? 0.4,
+          maxOutputTokens: args.maxOutputTokens ?? 4096,
+        },
+      }),
+      GEMINI_TIMEOUT_MS,
+      `AI Studio ${modelName}`
+    );
     const text = r.text ?? "";
     if (!text) return null;
     return { text, source: "aistudio" };

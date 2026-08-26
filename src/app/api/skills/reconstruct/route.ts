@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { isGcpAvailable, writeDoc } from "@/lib/gcp";
 import { generateJson, generateJsonWithImages } from "@/lib/genai";
 
+// Vercel serverless function timeout. Default is 10s; Gemini video analysis
+// can take 15-30s depending on length. Bump to 60s on Hobby (the max).
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 /**
  * POST /api/skills/reconstruct
  *
