@@ -1,5 +1,9 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { Button, FeatureTag, FeatureCard } from "@/components/ui";
+import { getSession } from "@/lib/auth/auth";
 
 const activeAgents = [
   {
@@ -32,7 +36,22 @@ const recentSkills = [
   { name: "Weekly Report Generator", runs: 8, success: 100, color: "mist-mint" },
 ];
 
+function getFirstName(name: string | undefined): string {
+  if (!name) return "there";
+  const first = name.trim().split(/\s+/)[0] || "there";
+  // Sanitize: cap at 24 chars, keep letters, hyphens, apostrophes, accented chars
+  const clean = first.replace(/[^A-Za-z\u00C0-\u024F'-]/g, "").slice(0, 24);
+  return clean || first || "there";
+}
+
 export default function DashboardPage() {
+  // Personalize the greeting with the signed-in user's first name.
+  // Auth is localStorage-only, so we read on mount and update state.
+  const [firstName, setFirstName] = useState<string>("there");
+  useEffect(() => {
+    const s = getSession();
+    setFirstName(getFirstName(s?.name));
+  }, []);
   return (
     <div className="page-container py-10">
       {/* Header */}
@@ -42,7 +61,7 @@ export default function DashboardPage() {
             Friday, August 21
           </p>
           <h1 className="text-[44px] md:text-[56px] font-bold leading-[1.1] tracking-[-0.04em] text-obsidian">
-            Welcome back, Ada.
+            Welcome back, {firstName}.
           </h1>
         </div>
         <div className="flex gap-3">
