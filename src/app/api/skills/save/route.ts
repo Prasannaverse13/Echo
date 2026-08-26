@@ -69,11 +69,17 @@ export async function POST(req: NextRequest) {
     intent: typeof body.intent === "string" ? body.intent.slice(0, 1000) : "",
     steps,
     trigger: typeof body.trigger === "string" ? body.trigger : "Manual",
+    triggers: Array.isArray(body.triggers)
+      ? body.triggers.filter((x: unknown) => typeof x === "string").slice(0, 20)
+      : [],
     integrations: Array.isArray(body.integrations)
       ? body.integrations.filter((x: unknown) => typeof x === "string").slice(0, 20)
       : [],
     createdAt: new Date().toISOString(),
-    source: "manual",
+    source:
+      body.source === "recorder" || body.source === "manual"
+        ? body.source
+        : "manual",
   };
 
   let gcp: "connected" | "disabled" | "error" = "disabled";

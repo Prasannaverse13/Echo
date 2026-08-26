@@ -1,27 +1,33 @@
-import Link from "next/link";
-import { notFound } from "next/navigation";
-import { Button, FeatureTag, FeatureCard } from "@/components/ui";
+"use client";
 
-const skillData: Record<
-  string,
-  {
-    name: string;
-    description: string;
-    color: "dusty-sky" | "wisteria" | "desert-clay" | "mist-mint";
-    intent: string;
-    trigger: string;
-    steps: { num: number; title: string; detail: string }[];
-    integrations: string[];
-    stats: { label: string; value: string }[];
-    runHistory: {
-      id: string;
-      input: string;
-      status: "success" | "failed" | "review";
-      duration: string;
-      when: string;
-    }[];
-  }
-> = {
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
+import { Button, FeatureTag, FeatureCard } from "@/components/ui";
+import { listSkills, type SkillRecord } from "@/lib/client/stores";
+
+type Step = { num: number; title: string; detail: string; at?: string };
+
+type RichSkill = {
+  name: string;
+  description: string;
+  color: "dusty-sky" | "wisteria" | "desert-clay" | "mist-mint";
+  intent: string;
+  trigger: string;
+  steps: Step[];
+  integrations: string[];
+  stats?: { label: string; value: string }[];
+  runHistory?: {
+    id: string;
+    input: string;
+    status: "success" | "failed" | "review";
+    duration: string;
+    when: string;
+  }[];
+  source?: "demo" | "manual" | "recorder" | "composer" | "seed";
+};
+
+const skillData: Record<string, RichSkill> = {
   "rfp-response": {
     name: "RFP Response Drafting",
     description: "Reads RFP PDFs and drafts answers from your knowledge vault.",
@@ -30,35 +36,11 @@ const skillData: Record<
       "When an RFP PDF arrives in Drive/RFPs, read every question, search the knowledge vault for matching content, and draft a complete response document with citations.",
     trigger: "New file in Drive/RFPs",
     steps: [
-      {
-        num: 1,
-        title: "Detect new RFP",
-        detail: "Watch Drive/RFPs folder for new PDF uploads.",
-      },
-      {
-        num: 2,
-        title: "Extract questions",
-        detail:
-          "Read PDF, identify all questions (numbered, bulleted, or section headers).",
-      },
-      {
-        num: 3,
-        title: "Search knowledge vault",
-        detail:
-          "For each question, semantically search the vault (past RFPs, case studies, product docs).",
-      },
-      {
-        num: 4,
-        title: "Draft responses",
-        detail:
-          "Generate a response for each question with inline citations to source docs.",
-      },
-      {
-        num: 5,
-        title: "Flag for review",
-        detail:
-          "Mark questions with low-confidence matches as 'needs human review' before saving.",
-      },
+      { num: 1, title: "Detect new RFP", detail: "Watch Drive/RFPs folder for new PDF uploads." },
+      { num: 2, title: "Extract questions", detail: "Read PDF, identify all questions (numbered, bulleted, or section headers)." },
+      { num: 3, title: "Search knowledge vault", detail: "For each question, semantically search the vault (past RFPs, case studies, product docs)." },
+      { num: 4, title: "Draft responses", detail: "Generate a response for each question with inline citations to source docs." },
+      { num: 5, title: "Flag for review", detail: "Mark questions with low-confidence matches as 'needs human review' before saving." },
     ],
     integrations: ["Drive", "Gmail", "Sheets", "Slack"],
     stats: [
@@ -68,41 +50,11 @@ const skillData: Record<
       { label: "Avg time saved", value: "12h/run" },
     ],
     runHistory: [
-      {
-        id: "run_2401",
-        input: "Acme Corp RFP Q3.pdf",
-        status: "success",
-        duration: "3m 42s",
-        when: "2h ago",
-      },
-      {
-        id: "run_2400",
-        input: "Globex Industries RFI.pdf",
-        status: "success",
-        duration: "5m 11s",
-        when: "1d ago",
-      },
-      {
-        id: "run_2399",
-        input: "Initech Security Audit.pdf",
-        status: "review",
-        duration: "4m 30s",
-        when: "1d ago",
-      },
-      {
-        id: "run_2398",
-        input: "scanned-form-2024.pdf",
-        status: "failed",
-        duration: "0m 8s",
-        when: "2d ago",
-      },
-      {
-        id: "run_2397",
-        input: "Stark Industries RFP.pdf",
-        status: "success",
-        duration: "4m 02s",
-        when: "3d ago",
-      },
+      { id: "run_2401", input: "Acme Corp RFP Q3.pdf", status: "success", duration: "3m 42s", when: "2h ago" },
+      { id: "run_2400", input: "Globex Industries RFI.pdf", status: "success", duration: "5m 11s", when: "1d ago" },
+      { id: "run_2399", input: "Initech Security Audit.pdf", status: "review", duration: "4m 30s", when: "1d ago" },
+      { id: "run_2398", input: "scanned-form-2024.pdf", status: "failed", duration: "0m 8s", when: "2d ago" },
+      { id: "run_2397", input: "Stark Industries RFP.pdf", status: "success", duration: "4m 02s", when: "3d ago" },
     ],
   },
   "inbox-triage": {
@@ -113,35 +65,11 @@ const skillData: Record<
       "Every 15 minutes, scan unread email, classify each message (urgent / FYI / meeting request / spam), draft a reply where appropriate, and surface only what truly needs the user's eyes.",
     trigger: "Every 15 min / New email",
     steps: [
-      {
-        num: 1,
-        title: "Pull unread mail",
-        detail: "List unread threads from the last 15 minutes via the Gmail API.",
-      },
-      {
-        num: 2,
-        title: "Classify intent",
-        detail:
-          "For each thread, decide between urgent / FYI / meeting / spam using the user's last 30 days of similar labels.",
-      },
-      {
-        num: 3,
-        title: "Draft replies",
-        detail:
-          "Generate a short, on-tone reply draft for every actionable message and save as a Gmail draft (not sent).",
-      },
-      {
-        num: 4,
-        title: "Schedule meetings",
-        detail:
-          "When a thread looks like a meeting request, propose 3 free slots from Calendar and embed them in the draft.",
-      },
-      {
-        num: 5,
-        title: "Surface only the urgent",
-        detail:
-          "Push only the urgent-and-needs-decision threads to Echo; archive the rest silently.",
-      },
+      { num: 1, title: "Pull unread mail", detail: "List unread threads from the last 15 minutes via the Gmail API." },
+      { num: 2, title: "Classify intent", detail: "For each thread, decide between urgent / FYI / meeting / spam using the user's last 30 days of similar labels." },
+      { num: 3, title: "Draft replies", detail: "Generate a short, on-tone reply draft for every actionable message and save as a Gmail draft (not sent)." },
+      { num: 4, title: "Schedule meetings", detail: "When a thread looks like a meeting request, propose 3 free slots from Calendar and embed them in the draft." },
+      { num: 5, title: "Surface only the urgent", detail: "Push only the urgent-and-needs-decision threads to Echo; archive the rest silently." },
     ],
     integrations: ["Gmail", "Calendar"],
     stats: [
@@ -166,35 +94,11 @@ const skillData: Record<
       "When a PDF lands in Drive/Invoices, detect any tables, convert them to structured rows, and append to the matching Google Sheet with column mapping preserved.",
     trigger: "New PDF in Drive/Invoices",
     steps: [
-      {
-        num: 1,
-        title: "Watch Drive folder",
-        detail: "Poll Drive/Invoices for new PDFs every 60s.",
-      },
-      {
-        num: 2,
-        title: "Locate tables",
-        detail:
-          "Use Gemini Vision to scan each page and locate any tabular data regions.",
-      },
-      {
-        num: 3,
-        title: "Extract rows",
-        detail:
-          "For each table, return rows as structured JSON with column headers preserved.",
-      },
-      {
-        num: 4,
-        title: "Map columns",
-        detail:
-          "Match the PDF's column names to existing Sheet headers (fuzzy match) and flag any unknown columns.",
-      },
-      {
-        num: 5,
-        title: "Append to Sheet",
-        detail:
-          "Append extracted rows to the bottom of the target sheet, leaving existing data intact.",
-      },
+      { num: 1, title: "Watch Drive folder", detail: "Poll Drive/Invoices for new PDFs every 60s." },
+      { num: 2, title: "Locate tables", detail: "Use Gemini Vision to scan each page and locate any tabular data regions." },
+      { num: 3, title: "Extract rows", detail: "For each table, return rows as structured JSON with column headers preserved." },
+      { num: 4, title: "Map columns", detail: "Match the PDF's column names to existing Sheet headers (fuzzy match) and flag any unknown columns." },
+      { num: 5, title: "Append to Sheet", detail: "Append extracted rows to the bottom of the target sheet, leaving existing data intact." },
     ],
     integrations: ["Drive", "Sheets"],
     stats: [
@@ -219,35 +123,11 @@ const skillData: Record<
       "Every Monday at 9am, pull last week's metrics from Sheets, draft a short summary with the headline wins and 3 things to watch, and post to the #team channel.",
     trigger: "Schedule · Mon 9am",
     steps: [
-      {
-        num: 1,
-        title: "Schedule trigger",
-        detail: "Cloud Scheduler fires the skill at 09:00 IST every Monday.",
-      },
-      {
-        num: 2,
-        title: "Pull weekly metrics",
-        detail:
-          "Read this week's rows from Sheets/Metrics and compute deltas vs the prior week.",
-      },
-      {
-        num: 3,
-        title: "Identify highlights",
-        detail:
-          "Rank rows by absolute change and pick the top 3 wins + top 3 dips.",
-      },
-      {
-        num: 4,
-        title: "Draft summary",
-        detail:
-          "Write a 5-line summary in the user's last-used voice (concise, second-person).",
-      },
-      {
-        num: 5,
-        title: "Post to Slack",
-        detail:
-          "Send the summary to #team with thread replies pre-drafted for each highlight.",
-      },
+      { num: 1, title: "Schedule trigger", detail: "Cloud Scheduler fires the skill at 09:00 IST every Monday." },
+      { num: 2, title: "Pull weekly metrics", detail: "Read this week's rows from Sheets/Metrics and compute deltas vs the prior week." },
+      { num: 3, title: "Identify highlights", detail: "Rank rows by absolute change and pick the top 3 wins + top 3 dips." },
+      { num: 4, title: "Draft summary", detail: "Write a 5-line summary in the user's last-used voice (concise, second-person)." },
+      { num: 5, title: "Post to Slack", detail: "Send the summary to #team with thread replies pre-drafted for each highlight." },
     ],
     integrations: ["Sheets", "Slack"],
     stats: [
@@ -271,36 +151,11 @@ const skillData: Record<
       "When HubSpot fires the 'new-lead' webhook, fetch the lead's LinkedIn profile (or company page if personal isn't public), summarize 2-3 talking points, and append them as a note on the HubSpot contact.",
     trigger: "Webhook from HubSpot",
     steps: [
-      {
-        num: 1,
-        title: "Receive webhook",
-        detail:
-          "Cloud Run endpoint accepts HubSpot's new-lead POST and enqueues a task.",
-      },
-      {
-        num: 2,
-        title: "Resolve LinkedIn",
-        detail:
-          "Search LinkedIn for the lead by name + company; prefer personal profile, fall back to company page.",
-      },
-      {
-        num: 3,
-        title: "Extract highlights",
-        detail:
-          "From the public profile, pull current role, recent posts, mutual connections, and shared groups.",
-      },
-      {
-        num: 4,
-        title: "Write HubSpot note",
-        detail:
-          "Append a 3-line note to the contact with the highlights and 1 suggested opener line.",
-      },
-      {
-        num: 5,
-        title: "Notify rep",
-        detail:
-          "DM the assigned rep in Slack with the note + a 'mark as enriched' button.",
-      },
+      { num: 1, title: "Receive webhook", detail: "Cloud Run endpoint accepts HubSpot's new-lead POST and enqueues a task." },
+      { num: 2, title: "Resolve LinkedIn", detail: "Search LinkedIn for the lead by name + company; prefer personal profile, fall back to company page." },
+      { num: 3, title: "Extract highlights", detail: "From the public profile, pull current role, recent posts, mutual connections, and shared groups." },
+      { num: 4, title: "Write HubSpot note", detail: "Append a 3-line note to the contact with the highlights and 1 suggested opener line." },
+      { num: 5, title: "Notify rep", detail: "DM the assigned rep in Slack with the note + a 'mark as enriched' button." },
     ],
     integrations: ["HubSpot", "LinkedIn"],
     stats: [
@@ -325,35 +180,11 @@ const skillData: Record<
       "When a new post is published in Ghost, generate 3 platform-tuned variants (LinkedIn, Twitter/X, Threads) with appropriate length and hook placement, and queue them in Buffer for the next 9am slot.",
     trigger: "New post in Ghost",
     steps: [
-      {
-        num: 1,
-        title: "Watch Ghost",
-        detail: "Ghost webhook fires on 'post.published'.",
-      },
-      {
-        num: 2,
-        title: "Read post",
-        detail:
-          "Fetch the post HTML, strip tags, and extract the first 200 chars for hook generation.",
-      },
-      {
-        num: 3,
-        title: "Generate variants",
-        detail:
-          "Produce 3 distinct variants tuned to each platform's voice and length (LinkedIn 220-280ch, Twitter 240ch thread, Threads 400ch).",
-      },
-      {
-        num: 4,
-        title: "Add hashtags",
-        detail:
-          "Append 2-3 niche hashtags from a per-platform tag bank; never invent tags.",
-      },
-      {
-        num: 5,
-        title: "Queue in Buffer",
-        detail:
-          "Push the 3 variants to Buffer with the next 9am publish slot; tag the post in Buffer for tracking.",
-      },
+      { num: 1, title: "Watch Ghost", detail: "Ghost webhook fires on 'post.published'." },
+      { num: 2, title: "Read post", detail: "Fetch the post HTML, strip tags, and extract the first 200 chars for hook generation." },
+      { num: 3, title: "Generate variants", detail: "Produce 3 distinct variants tuned to each platform's voice and length (LinkedIn 220-280ch, Twitter 240ch thread, Threads 400ch)." },
+      { num: 4, title: "Add hashtags", detail: "Append 2-3 niche hashtags from a per-platform tag bank; never invent tags." },
+      { num: 5, title: "Queue in Buffer", detail: "Push the 3 variants to Buffer with the next 9am publish slot; tag the post in Buffer for tracking." },
     ],
     integrations: ["Ghost", "Twitter", "LinkedIn"],
     stats: [
@@ -371,14 +202,95 @@ const skillData: Record<
   },
 };
 
-export default async function SkillDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  const skill = skillData[id];
-  if (!skill) notFound();
+function fromLocalStorage(s: SkillRecord): RichSkill {
+  return {
+    name: s.name,
+    description: s.description,
+    color: s.color,
+    intent:
+      (s as unknown as { intent?: string }).intent ||
+      `${s.name}: ${s.description}. Created from a screen recording on ${new Date(s.createdAt).toLocaleString()}.`,
+    trigger: s.trigger || "Manual",
+    steps: (s.steps || []).map((st) => ({
+      num: st.num,
+      title: st.title,
+      detail: st.detail,
+      at: st.at,
+    })),
+    integrations: (s as unknown as { integrations?: string[] }).integrations || [],
+    source: s.source,
+    stats: [
+      { label: "Status", value: "Ready" },
+      { label: "Source", value: s.source === "recorder" ? "Screen capture" : s.source === "manual" ? "Typed" : s.source === "composer" ? "Composed" : "Demo" },
+      { label: "Created", value: new Date(s.createdAt).toLocaleDateString() },
+      { label: "Steps", value: String((s.steps || []).length) },
+    ],
+    runHistory: [],
+  };
+}
+
+export default function SkillDetailPage() {
+  const params = useParams<{ id: string }>();
+  const id = params?.id;
+  const [state, setState] = useState<
+    | { kind: "loading" }
+    | { kind: "found"; skill: RichSkill }
+    | { kind: "notfound" }
+  >({ kind: "loading" });
+
+  useEffect(() => {
+    if (!id) {
+      setState({ kind: "notfound" });
+      return;
+    }
+    // 1) hardcoded demo skills
+    if (skillData[id]) {
+      setState({ kind: "found", skill: skillData[id] });
+      return;
+    }
+    // 2) user-created skills in localStorage
+    try {
+      const userId = getUserIdFromSession();
+      const all = listSkills(userId);
+      const found = all.find((s) => s.id === id);
+      if (found) {
+        setState({ kind: "found", skill: fromLocalStorage(found) });
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    setState({ kind: "notfound" });
+  }, [id]);
+
+  if (state.kind === "loading") {
+    return (
+      <div className="page-container py-20 text-center text-obsidian/60">
+        Loading…
+      </div>
+    );
+  }
+
+  if (state.kind === "notfound") {
+    return (
+      <div className="page-container py-20">
+        <div className="max-w-md mx-auto text-center">
+          <p className="text-display-md font-bold mb-3">Skill not found</p>
+          <p className="text-body text-obsidian/70 mb-6">
+            This skill may have been deleted, or it was created in another session.
+          </p>
+          <Link
+            href="/skills"
+            className="inline-block px-4 py-2 rounded-lg bg-obsidian text-paper-white text-body-sm font-medium hover:bg-obsidian/90"
+          >
+            ← Back to Skills
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const skill = state.skill;
 
   return (
     <div className="page-container py-10">
@@ -394,7 +306,17 @@ export default async function SkillDetailPage({
         <div>
           <div className="flex items-center gap-3 mb-3">
             <FeatureTag variant="obsidian">Skill</FeatureTag>
-            <FeatureTag variant="iron">v3</FeatureTag>
+            <FeatureTag variant="iron">
+              {skill.source === "recorder"
+                ? "From screen capture"
+                : skill.source === "manual"
+                  ? "Manual"
+                  : skill.source === "composer"
+                    ? "Composed"
+                    : skill.source === "seed"
+                      ? "Demo"
+                      : "Demo"}
+            </FeatureTag>
             <FeatureTag variant="mist-mint">Healthy</FeatureTag>
           </div>
           <h1 className="text-display-md font-bold">{skill.name}</h1>
@@ -403,31 +325,37 @@ export default async function SkillDetailPage({
           </p>
         </div>
         <div className="flex gap-3">
-          <Button variant="outline-light" size="md">
-            ✎ Edit
-          </Button>
-          <Button variant="light" size="md">
-            ▶ Run now
-          </Button>
+          <Link href="/record">
+            <Button variant="outline-light" size="md">
+              ✎ Record a new one
+            </Button>
+          </Link>
+          <Link href="/compose">
+            <Button variant="light" size="md">
+              ▶ Compose with this
+            </Button>
+          </Link>
         </div>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
-        {skill.stats.map((stat) => (
-          <FeatureCard
-            key={stat.label}
-            surface="paper-white"
-            padding="md"
-            className="hairline"
-          >
-            <p className="text-caption text-obsidian/50 mb-1">{stat.label}</p>
-            <p className="text-heading-sm font-bold tabular-nums">
-              {stat.value}
-            </p>
-          </FeatureCard>
-        ))}
-      </div>
+      {skill.stats && skill.stats.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+          {skill.stats.map((stat) => (
+            <FeatureCard
+              key={stat.label}
+              surface="paper-white"
+              padding="md"
+              className="hairline"
+            >
+              <p className="text-caption text-obsidian/50 mb-1">{stat.label}</p>
+              <p className="text-heading-sm font-bold tabular-nums">
+                {stat.value}
+              </p>
+            </FeatureCard>
+          ))}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Intent + Steps */}
@@ -440,7 +368,9 @@ export default async function SkillDetailPage({
           </FeatureCard>
 
           <div>
-            <h2 className="text-heading-sm font-bold mb-4">Reconstructed steps</h2>
+            <h2 className="text-heading-sm font-bold mb-4">
+              {skill.source === "recorder" ? "Reconstructed steps" : "Steps"}
+            </h2>
             <div className="space-y-3">
               {skill.steps.map((step) => (
                 <FeatureCard
@@ -454,7 +384,14 @@ export default async function SkillDetailPage({
                       {step.num}
                     </div>
                     <div className="flex-1">
-                      <h3 className="text-body font-bold mb-1">{step.title}</h3>
+                      <div className="flex items-baseline justify-between gap-2">
+                        <h3 className="text-body font-bold mb-1">{step.title}</h3>
+                        {step.at && (
+                          <span className="text-caption text-obsidian/50 tabular-nums">
+                            {step.at}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-body-sm text-obsidian/70">
                         {step.detail}
                       </p>
@@ -473,79 +410,96 @@ export default async function SkillDetailPage({
               Trigger
             </h3>
             <p className="text-body-sm font-medium">{skill.trigger}</p>
-            <Button variant="outline-light" size="sm" className="mt-3 w-full">
-              Edit trigger
-            </Button>
           </FeatureCard>
 
-          <FeatureCard surface="paper-white" padding="md" className="hairline">
-            <h3 className="text-caption font-medium uppercase opacity-60 mb-3">
-              Integrations
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {skill.integrations.map((i) => (
-                <FeatureTag key={i} variant="iron">
-                  {i}
-                </FeatureTag>
-              ))}
-            </div>
-          </FeatureCard>
+          {skill.integrations.length > 0 && (
+            <FeatureCard surface="paper-white" padding="md" className="hairline">
+              <h3 className="text-caption font-medium uppercase opacity-60 mb-3">
+                Integrations
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {skill.integrations.map((i) => (
+                  <FeatureTag key={i} variant="iron">
+                    {i}
+                  </FeatureTag>
+                ))}
+              </div>
+            </FeatureCard>
+          )}
 
           <FeatureCard surface="wisteria" padding="md">
             <h3 className="text-caption font-medium uppercase opacity-60 mb-2">
-              Manager suggests
+              Next step
             </h3>
             <p className="text-body-sm">
-              Combine with <em>Slack Notifier</em> to auto-ping the sales
-              channel when an RFP lands.
+              Open the Composer to bind this skill to a trigger, connect it to your
+              real integrations, and run it on production inputs.
             </p>
-            <Button variant="light" size="sm" className="mt-3 w-full">
-              + Create composed skill
-            </Button>
+            <Link href="/compose" className="block mt-3">
+              <Button variant="light" size="sm" className="w-full">
+                → Open Composer
+              </Button>
+            </Link>
           </FeatureCard>
         </div>
       </div>
 
-      {/* Run history */}
-      <div className="mt-12">
-        <h2 className="text-heading-sm font-bold mb-4">Run history</h2>
-        <FeatureCard surface="paper-white" padding="md" className="hairline overflow-hidden">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="border-b border-iron">
-                <th className="text-caption font-medium uppercase opacity-60 py-3">Run</th>
-                <th className="text-caption font-medium uppercase opacity-60 py-3">Input</th>
-                <th className="text-caption font-medium uppercase opacity-60 py-3">Status</th>
-                <th className="text-caption font-medium uppercase opacity-60 py-3">Duration</th>
-                <th className="text-caption font-medium uppercase opacity-60 py-3">When</th>
-              </tr>
-            </thead>
-            <tbody>
-              {skill.runHistory.map((run) => (
-                <tr key={run.id} className="border-b border-iron last:border-0">
-                  <td className="py-3 text-caption font-mono">{run.id}</td>
-                  <td className="py-3 text-body-sm">{run.input}</td>
-                  <td className="py-3">
-                    <FeatureTag
-                      variant={
-                        run.status === "success"
-                          ? "mist-mint"
-                          : run.status === "review"
-                            ? "desert-clay"
-                            : "iron"
-                      }
-                    >
-                      {run.status}
-                    </FeatureTag>
-                  </td>
-                  <td className="py-3 text-body-sm tabular-nums">{run.duration}</td>
-                  <td className="py-3 text-caption text-obsidian/60">{run.when}</td>
+      {/* Run history — only for skills that have one */}
+      {skill.runHistory && skill.runHistory.length > 0 && (
+        <div className="mt-12">
+          <h2 className="text-heading-sm font-bold mb-4">Run history</h2>
+          <FeatureCard surface="paper-white" padding="md" className="hairline overflow-hidden">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="border-b border-iron">
+                  <th className="text-caption font-medium uppercase opacity-60 py-3">Run</th>
+                  <th className="text-caption font-medium uppercase opacity-60 py-3">Input</th>
+                  <th className="text-caption font-medium uppercase opacity-60 py-3">Status</th>
+                  <th className="text-caption font-medium uppercase opacity-60 py-3">Duration</th>
+                  <th className="text-caption font-medium uppercase opacity-60 py-3">When</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </FeatureCard>
-      </div>
+              </thead>
+              <tbody>
+                {skill.runHistory.map((run) => (
+                  <tr key={run.id} className="border-b border-iron last:border-0">
+                    <td className="py-3 text-caption font-mono">{run.id}</td>
+                    <td className="py-3 text-body-sm">{run.input}</td>
+                    <td className="py-3">
+                      <FeatureTag
+                        variant={
+                          run.status === "success"
+                            ? "mist-mint"
+                            : run.status === "review"
+                              ? "desert-clay"
+                              : "iron"
+                        }
+                      >
+                        {run.status}
+                      </FeatureTag>
+                    </td>
+                    <td className="py-3 text-body-sm tabular-nums">{run.duration}</td>
+                    <td className="py-3 text-caption text-obsidian/60">{run.when}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </FeatureCard>
+        </div>
+      )}
     </div>
   );
+}
+
+function getUserIdFromSession(): string {
+  if (typeof window === "undefined") return "anon";
+  try {
+    const session = window.localStorage.getItem("echo.session");
+    if (session) {
+      const parsed = JSON.parse(session);
+      if (parsed?.email) return parsed.email;
+    }
+  } catch {
+    /* ignore */
+  }
+  return "anon";
 }

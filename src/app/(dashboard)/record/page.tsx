@@ -22,6 +22,10 @@ export default function RecordPage() {
   const [steps, setSteps] = React.useState<ReconstructedStep[]>([]);
   const [skillName, setSkillName] = React.useState("");
   const [skillDescription, setSkillDescription] = React.useState("");
+  const [intent, setIntent] = React.useState("");
+  const [triggers, setTriggers] = React.useState<string[]>([]);
+  const [integrations, setIntegrations] = React.useState<string[]>([]);
+  const [source, setSource] = React.useState<"aistudio" | "vertex" | "mock" | null>(null);
 
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
@@ -505,9 +509,21 @@ export default function RecordPage() {
       }
 
       const data = await res.json();
-      setSteps(data.steps);
+      const incomingSteps: ReconstructedStep[] = Array.isArray(data.steps)
+        ? data.steps.map((s: { num?: number; title?: string; detail?: string; at?: string }, i: number) => ({
+            num: s.num ?? i + 1,
+            title: s.title ?? `Step ${i + 1}`,
+            detail: s.detail ?? "",
+            at: s.at ?? "",
+          }))
+        : [];
+      setSteps(incomingSteps);
       setSkillName(data.suggestedName ?? "");
       setSkillDescription(data.suggestedDescription ?? "");
+      setIntent(data.intent ?? "");
+      setTriggers(Array.isArray(data.triggers) ? data.triggers : []);
+      setIntegrations(Array.isArray(data.integrations) ? data.integrations : []);
+      setSource((data.source as "aistudio" | "vertex" | "mock" | undefined) ?? null);
       setPhase("review");
     } catch (err) {
       setError(
@@ -528,7 +544,35 @@ export default function RecordPage() {
     setSteps([]);
     setSkillName("");
     setSkillDescription("");
+    setIntent("");
+    setTriggers([]);
+    setIntegrations([]);
+    setSource(null);
     frameBlobsRef.current = [];
+  };
+
+  const updateStep = (idx: number, patch: Partial<ReconstructedStep>) => {
+    setSteps((prev) =>
+      prev.map((s, i) => (i === idx ? { ...s, ...patch } : s))
+    );
+  };
+
+  const removeStep = (idx: number) => {
+    setSteps((prev) =>
+      prev.filter((_, i) => i !== idx).map((s, i) => ({ ...s, num: i + 1 }))
+    );
+  };
+
+  const addStep = () => {
+    setSteps((prev) => [
+      ...prev,
+      {
+        num: prev.length + 1,
+        title: `Step ${prev.length + 1}`,
+        detail: "",
+        at: "",
+      },
+    ]);
   };
 
   const userId = React.useMemo(getUserId, []);
@@ -569,11 +613,14 @@ export default function RecordPage() {
       name: name.slice(0, 80),
       description: description.slice(0, 500),
       color: colors[Math.floor(Math.random() * colors.length)],
-      trigger: "Manual",
+      trigger: triggers[0] || "Manual",
       steps: finalSteps,
       createdAt: new Date().toISOString(),
-      source: steps.length > 0 ? "recorder" : "manual",
-    };
+      source: (steps.length > 0 ? "recorder" : "manual") as "recorder" | "manual",
+      intent: intent || undefined,
+      triggers,
+      integrations,
+    } satisfies SkillRecord;
   };
 
   const saveSkill = async () => {
@@ -606,6 +653,9 @@ export default function RecordPage() {
           description: skill.description,
           steps: skill.steps,
           trigger: skill.trigger,
+          intent: skill.intent,
+          triggers: skill.triggers,
+          integrations: skill.integrations,
         }),
       });
       if (r.ok) {
@@ -799,39 +849,198 @@ export default function RecordPage() {
             <canvas ref={canvasRef} className="hidden" />
           </FeatureCard>
 
-          {/* Review panel */}
-          {phase === "review" && steps.length > 0 && (
-            <div>
-              <h2 className="text-heading-sm font-bold mb-3">
-                Echo reconstructed these steps
-              </h2>
-              <div className="space-y-2">
-                {steps.map((s) => (
-                  <FeatureCard
-                    key={s.num}
-                    surface="paper-white"
-                    padding="md"
-                    className="hairline"
-                  >
-                    <div className="flex items-start gap-4">
-                      <div className="flex-shrink-0 w-9 h-9 rounded-full bg-obsidian text-paper-white flex items-center justify-center font-bold text-caption">
-                        {s.num}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <h3 className="text-body font-bold">{s.title}</h3>
-                          <span className="text-caption text-obsidian/50 tabular-nums">
-                            {s.at}
-                          </span>
+          {/* Review & approve panel — full step-by-step with editing */}
+          {phase === "review" && (
+            <div className="space-y-4">
+              {/* Header summary */}
+              <FeatureCard surface="sandstone" padding="lg">
+                <div className="flex items-start gap-3">
+                  <div className="text-2xl">✨</div>
+                  <div className="flex-1">
+                    <p className="text-caption font-medium uppercase opacity-60 mb-1">
+                      Review your skill
+                    </p>
+                    <p className="text-body leading-relaxed">
+                      Echo watched {elapsed}s of your screen and reconstructed{" "}
+                      <strong>{steps.length} steps</strong>. Edit anything below
+                      that doesn't look right, then approve to save.
+                    </p>
+                    {source && (
+                      <p className="mt-2 text-caption text-obsidian/50">
+                        Analyzed by Gemini ({source}). Steps below are editable
+                        until you save.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </FeatureCard>
+
+              {/* Skill name + description (prominent) */}
+              <FeatureCard surface="paper-white" padding="lg" className="hairline">
+                <label className="text-caption font-medium uppercase opacity-60 block mb-2">
+                  Skill name
+                </label>
+                <input
+                  type="text"
+                  value={skillName}
+                  onChange={(e) => setSkillName(e.target.value)}
+                  maxLength={80}
+                  className="w-full px-4 py-3 rounded-lg border-2 border-iron bg-paper-white text-heading-sm font-bold focus:outline-none focus:border-obsidian mb-4"
+                />
+                <label className="text-caption font-medium uppercase opacity-60 block mb-2">
+                  Description
+                </label>
+                <textarea
+                  value={skillDescription}
+                  onChange={(e) => setSkillDescription(e.target.value)}
+                  rows={2}
+                  maxLength={500}
+                  className="w-full px-4 py-3 rounded-lg border border-iron bg-paper-white text-body resize-none focus:outline-none focus:border-obsidian"
+                />
+              </FeatureCard>
+
+              {/* Intent */}
+              {intent && (
+                <FeatureCard surface="paper-white" padding="md" className="hairline">
+                  <label className="text-caption font-medium uppercase opacity-60 block mb-2">
+                    Intent
+                  </label>
+                  <textarea
+                    value={intent}
+                    onChange={(e) => setIntent(e.target.value)}
+                    rows={3}
+                    maxLength={800}
+                    className="w-full px-3 py-2 rounded-lg border border-iron bg-paper-white text-body-sm resize-none focus:outline-none focus:border-obsidian leading-relaxed"
+                  />
+                </FeatureCard>
+              )}
+
+              {/* Steps with editing */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-heading-sm font-bold">
+                    Steps ({steps.length})
+                  </h2>
+                  <Button variant="outline-light" size="sm" onClick={addStep}>
+                    + Add step
+                  </Button>
+                </div>
+                <div className="space-y-3">
+                  {steps.map((s, i) => (
+                    <FeatureCard
+                      key={i}
+                      surface="paper-white"
+                      padding="md"
+                      className="hairline"
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="flex-shrink-0 w-9 h-9 rounded-full bg-obsidian text-paper-white flex items-center justify-center font-bold text-caption">
+                          {i + 1}
                         </div>
-                        <p className="text-body-sm text-obsidian/70 mt-1">
-                          {s.detail}
-                        </p>
+                        <div className="flex-1 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <input
+                              type="text"
+                              value={s.title}
+                              onChange={(e) => updateStep(i, { title: e.target.value })}
+                              placeholder="Step title"
+                              className="flex-1 px-3 py-2 rounded-lg border border-iron bg-paper-white text-body font-bold focus:outline-none focus:border-obsidian"
+                            />
+                            <input
+                              type="text"
+                              value={s.at}
+                              onChange={(e) => updateStep(i, { at: e.target.value })}
+                              placeholder="00:00"
+                              className="w-20 px-2 py-2 rounded-lg border border-iron bg-paper-white text-caption tabular-nums text-center focus:outline-none focus:border-obsidian"
+                            />
+                          </div>
+                          <textarea
+                            value={s.detail}
+                            onChange={(e) => updateStep(i, { detail: e.target.value })}
+                            placeholder="What happens in this step"
+                            rows={2}
+                            className="w-full px-3 py-2 rounded-lg border border-iron bg-paper-white text-body-sm resize-none focus:outline-none focus:border-obsidian"
+                          />
+                        </div>
+                        <button
+                          onClick={() => removeStep(i)}
+                          aria-label="Remove step"
+                          className="flex-shrink-0 w-8 h-8 rounded-lg text-obsidian/40 hover:text-red-500 hover:bg-red-50 transition-colors"
+                        >
+                          ✕
+                        </button>
                       </div>
-                    </div>
-                  </FeatureCard>
-                ))}
+                    </FeatureCard>
+                  ))}
+                </div>
               </div>
+
+              {/* Triggers & Integrations */}
+              {(triggers.length > 0 || integrations.length > 0) && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {triggers.length > 0 && (
+                    <FeatureCard surface="paper-white" padding="md" className="hairline">
+                      <h3 className="text-caption font-medium uppercase opacity-60 mb-3">
+                        When this skill should run
+                      </h3>
+                      <ul className="space-y-2">
+                        {triggers.map((t, i) => (
+                          <li key={i} className="text-body-sm text-obsidian/80">
+                            • {t}
+                          </li>
+                        ))}
+                      </ul>
+                    </FeatureCard>
+                  )}
+                  {integrations.length > 0 && (
+                    <FeatureCard surface="paper-white" padding="md" className="hairline">
+                      <h3 className="text-caption font-medium uppercase opacity-60 mb-3">
+                        Apps & services involved
+                      </h3>
+                      <div className="flex flex-wrap gap-2">
+                        {integrations.map((i) => (
+                          <FeatureTag key={i} variant="iron">
+                            {i}
+                          </FeatureTag>
+                        ))}
+                      </div>
+                    </FeatureCard>
+                  )}
+                </div>
+              )}
+
+              {/* Approve / Re-record */}
+              <FeatureCard surface="obsidian" padding="md" className="text-paper-white">
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div>
+                    <p className="text-caption font-medium uppercase opacity-60 mb-1">
+                      Ready to save?
+                    </p>
+                    <p className="text-body">
+                      Approve to add this skill to your library. You can run it
+                      from the Composer and edit it again later.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline-light"
+                      size="md"
+                      onClick={reset}
+                      disabled={saving}
+                    >
+                      ↻ Re-record
+                    </Button>
+                    <Button
+                      variant="light"
+                      size="md"
+                      onClick={saveSkill}
+                      disabled={!canSaveManual || saving}
+                    >
+                      {saving ? "Saving…" : "✓ Approve & save"}
+                    </Button>
+                  </div>
+                </div>
+              </FeatureCard>
             </div>
           )}
         </div>
@@ -883,19 +1092,28 @@ export default function RecordPage() {
                 />
               </>
             )}
-            <Button
-              variant="light"
-              size="md"
-              onClick={saveSkill}
-              disabled={!canSaveManual}
-              className="w-full"
-            >
-              {saving ? "Saving…" : "✓ Save skill"}
-            </Button>
+            {phase !== "review" && (
+              <Button
+                variant="light"
+                size="md"
+                onClick={saveSkill}
+                disabled={!canSaveManual}
+                className="w-full"
+              >
+                {saving ? "Saving…" : "✓ Save skill"}
+              </Button>
+            )}
             {phase !== "review" && (
               <p className="mt-2 text-caption text-obsidian/50">
                 Saves locally + to Firestore. The Composer and Run flows can pick it
                 up immediately.
+              </p>
+            )}
+            {phase === "review" && (
+              <p className="text-caption text-obsidian/50">
+                Edit the full skill in the review panel on the left — name,
+                description, intent, and each step are all editable. Hit
+                <strong> Approve & save </strong> at the bottom of the review.
               </p>
             )}
           </FeatureCard>
@@ -908,6 +1126,7 @@ export default function RecordPage() {
               <li>• Echo uses your browser's built-in screen capture — no install.</li>
               <li>• The full screen recording (up to 90s) is sent to Gemini.</li>
               <li>• Gemini reconstructs the intent, steps, and decision points.</li>
+              <li>• Review the full step-by-step, edit anything, then approve.</li>
               <li>• Or skip the recording entirely — type a name + steps and save.</li>
             </ul>
           </FeatureCard>

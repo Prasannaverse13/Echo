@@ -61,6 +61,12 @@ export interface SkillRecord {
   steps: Array<{ num: number; title: string; detail: string; at: string }>;
   createdAt: string;
   source: "recorder" | "composer" | "seed" | "manual";
+  // Optional richer fields populated by the Record flow (Gemini
+  // reconstructs these alongside the steps) and rendered on the
+  // skill detail page.
+  intent?: string;
+  triggers?: string[];
+  integrations?: string[];
 }
 
 export interface AgentRecord {
