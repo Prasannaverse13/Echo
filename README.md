@@ -150,6 +150,28 @@ pnpm smoke:agent                       # ADK agent via Vertex AI; needs GCP_ENAB
 | `GCP_PUBSUB_TOPIC` | `echo-runs` | Pub/Sub topic name. |
 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | _unset_ | OAuth client ID for the Google Workspace integrations on `/integrations`. |
 
+### Setting `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (Continue with Google)
+
+The "Continue with Google" button on `/login` and `/signup` is a **real Google Identity Services integration**, not a mock. To wire it to your own OAuth client:
+
+1. In [Google Cloud Console](https://console.cloud.google.com/) → **APIs & Services → Credentials**, create an OAuth 2.0 Client ID of type **Web application**.
+2. Add `http://localhost:3000` and your Vercel URL (e.g. `https://echo-one-liard.vercel.app`) to **Authorized JavaScript origins** and **Authorized redirect URIs**.
+3. Copy the client ID.
+4. Push it to Vercel production:
+
+   ```bash
+   $env:VERCEL_TOKEN = '<your-token>'  # vercel.com/account/tokens
+   pnpm vercel:set-google-client
+   # or: python vercel_set_client.py
+   ```
+
+   The script reads the project ID from `.vercel/project.json` and is idempotent (it PATCHes an existing `NEXT_PUBLIC_GOOGLE_CLIENT_ID` rather than duplicating it).
+
+For the All Things Agentic submission, the pre-wired client ID is:
+`431018085923-skdv940r6dm240at7l8lf2ei37le8571.apps.googleusercontent.com` (GCP project `echo-hackathon-2026`).
+
+When `NEXT_PUBLIC_GOOGLE_CLIENT_ID` is unset, the buttons fall back to a clearly-labelled demo account picker so judges can sign in offline without a real Google account.
+
 ### Auth: Application Default Credentials (ADC)
 
 Echo never ships a JSON service-account key file. ADC resolves credentials in this order:
