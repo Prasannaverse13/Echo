@@ -49,17 +49,81 @@ Keep steps between 3-7. Be specific and actionable. Use realistic MM:SS timestam
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
-  const { frameCount = 24, durationSec = 64, frames } = body as {
+  const {
+    frameCount = 0,
+    durationSec = 0,
+    frames,
+    video,
+    videoMimeType,
+  } = body as {
     frameCount?: number;
     durationSec?: number;
     frames?: string[];
+    video?: string;
+    videoMimeType?: string;
   };
 
-  // If we got real frames, send them to Gemini as actual images. The prompt
-  // tells Gemini that these are sequential screenshots of a workflow the
-  // user just performed, and asks it to extract the steps. If we don't have
-  // real frames (legacy / pre-multimodal client), fall back to the text-only
-  // path which is functionally a no-op (Gemini has nothing to look at).
+  // ---- Video path (preferred) ----
+  // The client records the entire screen as a webm and posts the full
+  // blob. Gemini 1.5+ supports inline video input and can describe what
+  // happens across the whole clip, including motion, scrolling, and
+  // hover state — none of which a frame-sampling approach can capture.
+  if (typeof video === "string" && video.length > 0) {
+    const m = /^data:([^;]+);base64,(.*)$/.exec(video);
+    const videoData = m
+      ? { mimeType: m[1] || videoMimeType || "video/webm", data: m[2] }
+      : { mimeType: videoMimeType || "video/webm", data: video };
+
+    const prompt = `${RECONSTRUCTION_PROMPT}\n\nThe attached file is a ${durationSec || "?"}-second screen recording of a workflow the user just performed. Watch the whole video carefully and extract the ordered steps, the intent, the right name, and the integrations involved. Be specific about what the user clicked, typed, and where the data went.`;
+
+    const result = await generateJsonWithImages({
+      model: "gemini-2.5-flash",
+      prompt,
+      temperature: 0.4,
+      images: [
+        { mimeType: videoData.mimeType, data: videoData.data },
+      ],
+    });
+    if (result?.text) {
+      try {
+        const parsed = JSON.parse(result.text) as ReconstructedSkill;
+        writeDoc(
+          "skills",
+          undefined,
+          parsed as unknown as Record<string, unknown>
+        ).catch(() => undefined);
+        return NextResponse.json({
+          ok: true,
+          source: result.source,
+          frameCount: 0,
+          videoSeconds: durationSec,
+          videoMimeType: videoData.mimeType,
+          ...parsed,
+        });
+      } catch (err) {
+        console.error("[reconstruct] Gemini video parse failed:", err);
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "Gemini watched the video but returned a non-JSON response. Try re-recording, or fill the skill in by hand.",
+          },
+          { status: 502 }
+        );
+      }
+    }
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "Gemini didn't return a response to the video. Check GEMINI_API_KEY, GCP credentials, and model availability.",
+      },
+      { status: 502 }
+    );
+  }
+
+  // ---- Frame path (legacy / fallback) ----
+  // If we got real frames, send them to Gemini as actual images.
   const realFrames = Array.isArray(frames)
     ? frames
         .filter((f): f is string => typeof f === "string" && f.length > 0)
@@ -123,10 +187,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Text-only fallback (legacy / no frames provided). Gemini has no actual
-  // images to look at here, so this is effectively a no-op — the prompt
-  // alone is not enough to reconstruct a workflow. We keep it so the
-  // endpoint still returns *something* for old clients.
+  // Text-only fallback (no video, no frames). Gemini has no actual media
+  // to look at here, so this is effectively a no-op — the prompt alone is
+  // not enough to reconstruct a workflow. We keep it so the endpoint
+  // still returns *something* for old clients.
   const result = await generateJson({
     model: "gemini-2.5-flash",
     prompt,

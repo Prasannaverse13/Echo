@@ -28,6 +28,20 @@ export default function RecordPage() {
   const captureIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
   const frameBlobsRef = React.useRef<Blob[]>([]);
   const phaseRef = React.useRef<Phase>("idle");
+  // The whole recorded video (webm) lives here between "Stop & learn"
+  // and the upload to /api/skills/reconstruct. Set by the MediaRecorder's
+  // onstop callback; consumed by stopAndLearn.
+  const recordedVideoRef = React.useRef<Blob | null>(null);
+  const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
+  // Best-quality webm the browser supports. We fall back if the codec
+  // string is rejected.
+  const PREFERRED_MIME_TYPES = [
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm;codecs=vp9",
+    "video/webm;codecs=vp8",
+    "video/webm",
+  ];
 
   React.useEffect(() => {
     phaseRef.current = phase;
@@ -48,6 +62,14 @@ export default function RecordPage() {
       }
       if (captureIntervalRef.current) {
         clearInterval(captureIntervalRef.current);
+      }
+      const rec = mediaRecorderRef.current;
+      if (rec && rec.state !== "inactive") {
+        try {
+          rec.stop();
+        } catch {
+          // ignore
+        }
       }
     };
   }, [stream]);
@@ -107,11 +129,47 @@ export default function RecordPage() {
       setFrames(0);
       frameBlobsRef.current = [];
       blackFrameCheckRef.current = 0;
+      recordedVideoRef.current = null;
 
-      // Capture a frame every 2 seconds while recording
-      captureIntervalRef.current = setInterval(() => {
-        captureFrame();
-      }, 2000);
+      // Record the entire stream as a webm and let Gemini analyze the
+      // full video. We keep frame capture as a no-op fallback for
+      // browsers without MediaRecorder support.
+      const pickedMime = PREFERRED_MIME_TYPES.find(
+        (t) =>
+          typeof MediaRecorder !== "undefined" &&
+          MediaRecorder.isTypeSupported(t)
+      );
+      if (pickedMime && typeof MediaRecorder !== "undefined") {
+        try {
+          const recorder = new MediaRecorder(mediaStream, {
+            mimeType: pickedMime,
+            videoBitsPerSecond: 250_000, // 250 kbps — keeps a 60s clip under 2 MB
+          });
+          mediaRecorderRef.current = recorder;
+          const chunks: Blob[] = [];
+          recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) chunks.push(e.data);
+          };
+          recorder.onstop = () => {
+            const blob = new Blob(chunks, { type: pickedMime });
+            recordedVideoRef.current = blob;
+            // Estimate frame count for the UI badge (assume 1 fps).
+            setFrames(Math.max(1, Math.round(blob.size / 30_000)));
+          };
+          recorder.onerror = (e) => {
+            console.warn("[record] MediaRecorder error:", e);
+          };
+          // Start with timeslice=1000 so we get periodic data events
+          // (helps the onstop handler not sit on a single big blob).
+          recorder.start(1000);
+        } catch (e) {
+          console.warn("[record] MediaRecorder init failed, falling back to frames:", e);
+          captureIntervalRef.current = setInterval(captureFrame, 2000);
+        }
+      } else {
+        // Old browser: frame-mode fallback.
+        captureIntervalRef.current = setInterval(captureFrame, 2000);
+      }
     } catch (err) {
       setPhase("idle");
       if (err instanceof Error) {
@@ -235,6 +293,15 @@ export default function RecordPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
+  // Convert a single Blob to a base64 data URL. Throws on read failure.
+  const blobToDataUrl = (b: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = () => reject(r.error || new Error("FileReader failed"));
+      r.readAsDataURL(b);
+    });
+
   // Convert an array of JPEG Blobs to base64 data URLs, in parallel.
   // Throws if any blob fails to read.
   const blobsToDataUrls = (blobs: Blob[]): Promise<string[]> =>
@@ -267,38 +334,68 @@ export default function RecordPage() {
       clearInterval(captureIntervalRef.current);
       captureIntervalRef.current = null;
     }
+    // Stop the MediaRecorder first; its onstop will populate
+    // recordedVideoRef with the final Blob, then we wait for that.
+    const recorder = mediaRecorderRef.current;
+    let videoPromise: Promise<Blob | null> = Promise.resolve(
+      recordedVideoRef.current
+    );
+    if (recorder && recorder.state !== "inactive") {
+      videoPromise = new Promise<Blob | null>((resolve) => {
+        const onStop = () => {
+          recorder.removeEventListener("stop", onStop);
+          resolve(recordedVideoRef.current);
+        };
+        recorder.addEventListener("stop", onStop);
+        try {
+          recorder.stop();
+        } catch {
+          resolve(recordedVideoRef.current);
+        }
+      });
+    }
     if (stream) {
       stream.getTracks().forEach((t) => t.stop());
       setStream(null);
     }
 
-    if (frameBlobsRef.current.length === 0) {
+    const videoBlob = await videoPromise;
+
+    // Nothing to analyze if both code paths produced nothing.
+    if (!videoBlob && frameBlobsRef.current.length === 0) {
       setError(
-        "No frames captured. You can still create the skill by hand on the right — name it, describe it, and hit Save."
+        "No video captured. You can still create the skill by hand on the right — name it, describe it, and hit Save."
       );
       setPhase("idle");
-      setElapsed(0); // reset the visible timer so the UI doesn't show a stale 00:41
+      setElapsed(0);
       return;
     }
 
     setPhase("uploading");
     setError(null);
     try {
-      // Resample to 24 frames (or fewer if the recording was short). Each
-      // frame is already a ~30-60KB JPEG, so the total body stays under
-      // Vercel's 4.5MB request limit even for 5-minute recordings.
-      const MAX_FRAMES = 24;
-      const sampled = sampleEvenly(frameBlobsRef.current, MAX_FRAMES);
-      const dataUrls = await blobsToDataUrls(sampled);
       setPhase("learning");
       const res = await fetch("/api/skills/reconstruct", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          frameCount: sampled.length,
-          durationSec: elapsed,
-          frames: dataUrls,
-        }),
+        body: JSON.stringify(
+          videoBlob
+            ? {
+                durationSec: elapsed,
+                video: await blobToDataUrl(videoBlob),
+                videoMimeType: videoBlob.type || "video/webm",
+                // Keep the frame path as a backup channel for clients
+                // without MediaRecorder. Backend prefers `video` if set.
+                frames: [],
+              }
+            : {
+                frameCount: frameBlobsRef.current.length,
+                durationSec: elapsed,
+                frames: await blobsToDataUrls(
+                  sampleEvenly(frameBlobsRef.current, 24)
+                ),
+              }
+        ),
       });
 
       if (!res.ok) {
