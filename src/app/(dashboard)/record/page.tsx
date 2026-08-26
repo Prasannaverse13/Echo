@@ -279,36 +279,98 @@ export default function RecordPage() {
   };
 
   /**
-   * Background watcher: every 2s while recording, if the most recent
-   * captured frame is essentially all black (mean luma < 10/255) and
-   * we've already captured 2+ frames, surface a warning. After 6s of
-   * consistently black frames, auto-stop and tell the user the screen
-   * capture came back blank.
+   * Background watcher: every 2s while recording, detect a "blank
+   * capture" and surface a clear actionable error. Two failure modes
+   * we have to catch:
+   *
+   *   1. The user shared the SAME tab Echo is on. Chrome blanks out
+   *      the current tab's MediaStream to break the feedback loop
+   *      (otherwise the page would be trying to display its own
+   *      capture), so the MediaRecorder gets essentially no data and
+   *      the produced webm is tiny.
+   *   2. The user picked a screen or window that's all-dark (e.g. a
+   *      locked screen, a black slide deck, a desktop with no open
+   *      windows in the captured area). The stream is valid but the
+   *      pixels are all near-black.
+   *
+   * We sample the LIVE video element (the same MediaStream that the
+   * MediaRecorder is reading) and check mean luma. If it's < 8/255
+   * for 4+ seconds we auto-stop, throw away the recording, and tell
+   * the user to pick a different tab/window.
    */
   const blackFrameCheckRef = React.useRef(0);
+  const lastSizeSampleRef = React.useRef(0);
+  const sizeGrowthStalledRef = React.useRef(0);
   React.useEffect(() => {
     if (phase !== "recording") return;
+    lastSizeSampleRef.current = 0;
+    sizeGrowthStalledRef.current = 0;
+    blackFrameCheckRef.current = 0;
     const t = setInterval(() => {
-      if (frameBlobsRef.current.length < 2) return;
-      const luma = computeRecentFrameLuma();
-      if (luma === null) return; // tainted canvas or no data
-      if (luma < 10) {
+      // Approach 1: luma on the live video element. This tells us
+      // whether the captured STREAM has visible content.
+      const luma = (() => {
+        const v = videoRef.current;
+        if (!v || v.videoWidth === 0 || v.videoHeight === 0) return null;
+        // Snapshot the live video frame into the canvas, then read pixels.
+        const canvas = canvasRef.current;
+        if (!canvas) return null;
+        const w = 320;
+        const h = Math.max(1, Math.round((v.videoHeight * w) / v.videoWidth));
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return null;
+        try {
+          ctx.drawImage(v, 0, 0, w, h);
+        } catch {
+          return null; // tainted — can't read
+        }
+        try {
+          const data = ctx.getImageData(0, 0, w, h).data;
+          let sum = 0;
+          for (let i = 0; i < data.length; i += 16 * 4) {
+            sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          }
+          const samples = Math.floor(data.length / (16 * 4));
+          return samples > 0 ? sum / samples : null;
+        } catch {
+          return null;
+        }
+      })();
+
+      // Approach 2: MediaRecorder encoded-size growth. If the encoder
+      // has produced nothing new in the last 2s, the stream is empty
+      // (independent of why — current-tab feedback loop, hardware
+      // permission issue, etc.).
+      const rec = mediaRecorderRef.current;
+      let sizeNow = 0;
+      if (rec && rec.state === "recording") {
+        // MediaRecorder doesn't expose a size, so we infer from the
+        // chunk count. We have to read our internal chunks ref via
+        // the most-recent data event — easier: just count data events
+        // by reading the recorder's internal state via a side effect.
+        // For simplicity here, we fall back to the luma check.
+        sizeNow = 0;
+      }
+      void sizeNow; // reserved for future per-event counter
+
+      if (luma === null) return; // can't read stream yet
+      if (luma < 8) {
         blackFrameCheckRef.current += 1;
-        if (blackFrameCheckRef.current === 2) {
+        if (blackFrameCheckRef.current === 1) {
           setError(
-            "The captured frames are coming back black. Pick a different tab or window, or use Create by hand on the right."
+            "Captured stream is all black. You're probably sharing the same tab Echo is on — Chrome blanks it out. Pick a different tab or window in the share picker."
           );
-        } else if (blackFrameCheckRef.current >= 3) {
-          // After 6s of black frames, give up and return to idle.
+        } else if (blackFrameCheckRef.current >= 2) {
+          // ~4s of consistently blank frames — give up.
           stopAndLearn();
         }
       } else {
-        // Got a real frame — clear the counter.
         blackFrameCheckRef.current = 0;
         if (luma < 25) {
-          // Dim but not black — don't error, but warn so the user knows.
           setError(
-            "Heads up: the captured frames are quite dim. If the workflow isn't visible, pick a brighter tab or window."
+            "Captured stream is very dim. If the workflow isn't visible, pick a brighter tab or window."
           );
         }
       }
@@ -389,6 +451,19 @@ export default function RecordPage() {
     if (!videoBlob && frameBlobsRef.current.length === 0) {
       setError(
         "No video captured. You can still create the skill by hand on the right — name it, describe it, and hit Save."
+      );
+      setPhase("idle");
+      setElapsed(0);
+      return;
+    }
+
+    // The MediaRecorder produced a blob but it's tiny — almost always
+    // because the user shared the same tab Echo is on and Chrome gave
+    // us a blank stream. Bail before wasting a Gemini call and a 30s
+    // round trip on a useless upload.
+    if (videoBlob && videoBlob.size < 4_000) {
+      setError(
+        "Recording came back empty (under 4 KB). You're probably sharing the same tab Echo is on — Chrome blanks it out. Pick a different tab or window in the share picker."
       );
       setPhase("idle");
       setElapsed(0);
@@ -662,23 +737,40 @@ export default function RecordPage() {
             padding="lg"
             className="aspect-video flex flex-col items-center justify-center text-paper-white overflow-hidden relative"
           >
+            {/* Hidden video element. The live preview is intentionally
+                NOT shown to the user — Chrome blanks out the video
+                element whenever the captured surface includes the
+                current tab (feedback loop prevention), and seeing a
+                black box makes the user think recording is broken. We
+                keep the element around so the luma watchdog can read
+                pixels from it. */}
+            <video
+              ref={videoRef}
+              className="hidden"
+              muted
+              playsInline
+            />
             {phase === "recording" ? (
-              <>
-                <video
-                  ref={videoRef}
-                  className="absolute inset-0 w-full h-full object-contain bg-obsidian"
-                  muted
-                  playsInline
-                />
-                <div className="absolute top-4 left-4 z-10">
-                  <div className="px-3 py-1.5 rounded-full bg-red-500/90 backdrop-blur-sm flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full bg-paper-white animate-pulse" />
-                    <span className="text-caption font-bold text-paper-white tracking-wider">
-                      REC
-                    </span>
-                  </div>
+              <div className="flex flex-col items-center justify-center text-paper-white px-6 text-center">
+                <div className="px-4 py-2 rounded-full bg-red-500/90 backdrop-blur-sm flex items-center gap-2 mb-6">
+                  <div className="w-2.5 h-2.5 rounded-full bg-paper-white animate-pulse" />
+                  <span className="text-caption font-bold text-paper-white tracking-wider">
+                    RECORDING
+                  </span>
                 </div>
-              </>
+                <p className="text-display-md font-bold tabular-nums">
+                  {mm}:{ss}
+                </p>
+                <p className="text-body-sm text-paper-white/70 mt-2 max-w-md">
+                  {frames > 0
+                    ? `${(frames * 30 / 1024).toFixed(1)} MB captured so far`
+                    : "Waiting for the encoder to produce frames…"}
+                </p>
+                <p className="text-caption text-paper-white/50 mt-4 max-w-md">
+                  Go perform the workflow on the tab or window you shared. Echo is
+                  watching it — you don't need to keep this page in front.
+                </p>
+              </div>
             ) : (
               <>
                 <div className="w-16 h-16 rounded-full bg-paper-white/10 flex items-center justify-center mb-4">
