@@ -147,9 +147,10 @@ export default function RecordPage() {
 
     if (frameBlobsRef.current.length === 0) {
       setError(
-        "No frames captured. Make sure you shared a visible screen or tab."
+        "No frames captured. You can still create the skill by hand on the right — name it, describe it, and hit Save."
       );
       setPhase("idle");
+      setElapsed(0); // reset the visible timer so the UI doesn't show a stale 00:41
       return;
     }
 
@@ -200,37 +201,98 @@ export default function RecordPage() {
 
   const userId = React.useMemo(getUserId, []);
 
-  const saveSkill = () => {
-    const name = (skillName || "Untitled skill").trim();
+  const [saving, setSaving] = React.useState(false);
+  const [manualStepsRaw, setManualStepsRaw] = React.useState("");
+
+  const buildManualSkill = (): SkillRecord | null => {
+    const name = skillName.trim();
+    if (!name) return null;
+    const description = skillDescription.trim() || "Manually created skill";
     const id = `skill_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const colors: SkillRecord["color"][] = ["dusty-sky", "wisteria", "desert-clay", "mist-mint"];
-    const skill: SkillRecord = {
+    // Build steps: prefer reconstructed steps, otherwise parse the manual
+    // "one per line" textarea, otherwise fall back to a single placeholder step.
+    const baseSteps: Array<{ num: number; title: string; detail: string; at: string }> =
+      steps.length > 0
+        ? steps.map((s) => ({ num: s.num, title: s.title, detail: s.detail, at: s.at }))
+        : manualStepsRaw
+            .split(/\r?\n/)
+            .map((l) => l.trim())
+            .filter((l) => l.length > 0)
+            .map((l, i) => {
+              const [title, ...rest] = l.split(" — ");
+              return {
+                num: i + 1,
+                title: title || l,
+                detail: rest.join(" — ") || "",
+                at: "",
+              };
+            });
+    const finalSteps =
+      baseSteps.length > 0
+        ? baseSteps
+        : [{ num: 1, title: "Execute the workflow", detail: description, at: "" }];
+    return {
       id,
-      name,
-      description: skillDescription || "Recorded from screen capture",
+      name: name.slice(0, 80),
+      description: description.slice(0, 500),
       color: colors[Math.floor(Math.random() * colors.length)],
       trigger: "Manual",
-      steps: steps.map((s) => ({ num: s.num, title: s.title, detail: s.detail, at: s.at })),
+      steps: finalSteps,
       createdAt: new Date().toISOString(),
-      source: "recorder",
+      source: steps.length > 0 ? "recorder" : "manual",
     };
-    saveSkillToStore(userId, skill);
-    appendLog(userId, { level: "success", agent: "echo-recorder", msg: `Skill saved: ${name}` });
-    // Persist the skill back to the server too (best-effort)
-    fetch("/api/skills/reconstruct", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        skillId: id,
-        name,
-        description: skill.description,
-        steps: skill.steps,
-        save: true,
-      }),
-    }).catch(() => undefined);
-    // Hand off to the skills page
-    if (typeof window !== "undefined") window.location.href = `/skills/${id}`;
   };
+
+  const saveSkill = async () => {
+    const skill = buildManualSkill();
+    if (!skill) {
+      setError("Give your skill a name before saving.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    // Local store first (always succeeds)
+    try {
+      saveSkillToStore(userId, skill);
+      appendLog(userId, {
+        level: "success",
+        agent: "echo-recorder",
+        msg: `Skill saved: ${skill.name}`,
+      });
+    } catch (e) {
+      console.error("[record] local save failed:", e);
+    }
+    // Best-effort persist to server
+    try {
+      const r = await fetch("/api/skills/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          skillId: skill.id,
+          name: skill.name,
+          description: skill.description,
+          steps: skill.steps,
+          trigger: skill.trigger,
+        }),
+      });
+      if (r.ok) {
+        const data = await r.json().catch(() => ({}));
+        appendLog(userId, {
+          level: "info",
+          agent: "echo-recorder",
+          msg: `Persisted to Firestore: ${data?.gcp ?? "?"}`,
+        });
+      }
+    } catch (e) {
+      console.warn("[record] server save failed (non-fatal):", e);
+    } finally {
+      setSaving(false);
+      if (typeof window !== "undefined") window.location.href = `/skills/${skill.id}`;
+    }
+  };
+
+  const canSaveManual = skillName.trim().length > 0 && !saving;
 
   const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
   const ss = String(elapsed % 60).padStart(2, "0");
@@ -427,7 +489,7 @@ export default function RecordPage() {
         <div className="space-y-4">
           <FeatureCard surface="paper-white" padding="md" className="hairline">
             <h3 className="text-caption font-medium uppercase opacity-60 mb-3">
-              Skill details
+              {phase === "review" ? "Skill details" : "Create by hand"}
             </h3>
             <label className="text-caption font-medium block mb-1">
               Skill name
@@ -437,8 +499,8 @@ export default function RecordPage() {
               value={skillName}
               onChange={(e) => setSkillName(e.target.value)}
               placeholder="e.g. PDF → Sheets"
-              disabled={phase !== "review"}
-              className="w-full px-3 py-2 rounded-lg border border-iron bg-paper-white text-body-sm mb-3 focus:outline-none focus:border-obsidian disabled:opacity-50"
+              maxLength={80}
+              className="w-full px-3 py-2 rounded-lg border border-iron bg-paper-white text-body-sm mb-3 focus:outline-none focus:border-obsidian"
             />
             <label className="text-caption font-medium block mb-1">
               Description
@@ -448,9 +510,43 @@ export default function RecordPage() {
               onChange={(e) => setSkillDescription(e.target.value)}
               rows={3}
               placeholder="What does this skill accomplish?"
-              disabled={phase !== "review"}
-              className="w-full px-3 py-2 rounded-lg border border-iron bg-paper-white text-body-sm resize-none focus:outline-none focus:border-obsidian disabled:opacity-50"
+              maxLength={500}
+              className="w-full px-3 py-2 rounded-lg border border-iron bg-paper-white text-body-sm resize-none mb-3 focus:outline-none focus:border-obsidian"
             />
+            {phase !== "review" && (
+              <>
+                <label className="text-caption font-medium block mb-1">
+                  Steps{" "}
+                  <span className="text-obsidian/40 font-normal">
+                    (optional · one per line · "title — detail")
+                  </span>
+                </label>
+                <textarea
+                  value={manualStepsRaw}
+                  onChange={(e) => setManualStepsRaw(e.target.value)}
+                  rows={5}
+                  placeholder={
+                    "Open the source spreadsheet\nFilter for last week's rows — only keep Status=Done\nCopy the matching rows into the summary tab"
+                  }
+                  className="w-full px-3 py-2 rounded-lg border border-iron bg-paper-white text-body-sm resize-none mb-3 focus:outline-none focus:border-obsidian font-mono text-caption"
+                />
+              </>
+            )}
+            <Button
+              variant="light"
+              size="md"
+              onClick={saveSkill}
+              disabled={!canSaveManual}
+              className="w-full"
+            >
+              {saving ? "Saving…" : "✓ Save skill"}
+            </Button>
+            {phase !== "review" && (
+              <p className="mt-2 text-caption text-obsidian/50">
+                Saves locally + to Firestore. The Composer and Run flows can pick it
+                up immediately.
+              </p>
+            )}
           </FeatureCard>
 
           <FeatureCard surface="dusty-sky" padding="md">
@@ -461,7 +557,7 @@ export default function RecordPage() {
               <li>• Echo uses your browser's built-in screen capture — no install.</li>
               <li>• Frames are captured every 2 seconds and sent to Gemini Vision.</li>
               <li>• Gemini reconstructs the intent and ordered steps from your frames.</li>
-              <li>• You can edit the steps before saving.</li>
+              <li>• Or skip the recording entirely — type a name + steps and save.</li>
             </ul>
           </FeatureCard>
 

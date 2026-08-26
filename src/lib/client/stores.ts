@@ -60,7 +60,7 @@ export interface SkillRecord {
   trigger: string;
   steps: Array<{ num: number; title: string; detail: string; at: string }>;
   createdAt: string;
-  source: "recorder" | "composer" | "seed";
+  source: "recorder" | "composer" | "seed" | "manual";
 }
 
 export interface AgentRecord {
