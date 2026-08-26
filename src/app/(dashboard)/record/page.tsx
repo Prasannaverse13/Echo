@@ -47,11 +47,31 @@ export default function RecordPage() {
     phaseRef.current = phase;
   }, [phase]);
 
-  // Timer for recording
+  // Timer for recording. At 60s we surface a "wrap it up" hint; at 90s we
+  // auto-stop so the captured webm stays well under Vercel's 4.5 MB body
+  // limit. (60s @ 150 kbps ≈ 1.1 MB raw; 90s ≈ 1.7 MB — both safe
+  // once base64-encoded.)
+  const RECORDING_SOFT_CAP_S = 60;
+  const RECORDING_HARD_CAP_S = 90;
   React.useEffect(() => {
     if (phase !== "recording") return;
-    const t = setInterval(() => setElapsed((s) => s + 1), 1000);
+    const t = setInterval(() => {
+      setElapsed((s) => {
+        const next = s + 1;
+        if (next === RECORDING_SOFT_CAP_S) {
+          setError(
+            "You've hit the 60s mark — Echo works best with 30-90s. Stop now, or let it auto-stop at 90s."
+          );
+        } else if (next >= RECORDING_HARD_CAP_S) {
+          // Hard cap: stop and learn so we never post a recording big
+          // enough to hit Vercel's body limit.
+          stopAndLearn();
+        }
+        return next;
+      });
+    }, 1000);
     return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
   // Cleanup stream on unmount
@@ -574,7 +594,7 @@ export default function RecordPage() {
                     {phase === "idle" && "Ready"}
                     {phase === "permission" && "Requesting screen access..."}
                     {phase === "recording" && "Recording"}
-                    {phase === "uploading" && "Uploading frames..."}
+                    {phase === "uploading" && "Uploading video..."}
                     {phase === "learning" && "Echo is learning..."}
                     {phase === "review" && "Skill ready for review"}
                   </p>
@@ -586,7 +606,9 @@ export default function RecordPage() {
                     {mm}:{ss}
                     {phase === "recording" && (
                       <span className="text-caption font-normal opacity-60 ml-3">
-                        · {frames} frame{frames === 1 ? "" : "s"} captured
+                        · {frames > 0
+                          ? `${(frames * 30 / 1024).toFixed(1)} MB recorded`
+                          : "recording…"}
                       </span>
                     )}
                   </p>
@@ -665,7 +687,7 @@ export default function RecordPage() {
                 <p className="text-heading-sm font-medium mb-1">
                   {phase === "idle" && "Click Start to share your screen"}
                   {phase === "permission" && "Pick a tab or window to share"}
-                  {phase === "uploading" && "Uploading frames to Gemini..."}
+                  {phase === "uploading" && "Uploading screen recording to Gemini..."}
                   {phase === "learning" && "Reconstructing your skill..."}
                   {phase === "review" && "Skill reconstructed!"}
                 </p>
@@ -673,9 +695,9 @@ export default function RecordPage() {
                   {phase === "idle" &&
                     "Echo uses your browser's built-in screen capture. No install, no extension — works in Chrome, Edge, Arc, and Brave."}
                   {phase === "permission" &&
-                    "Choose a browser tab, window, or entire screen. We capture a frame every 2 seconds."}
+                    "Choose a browser tab, window, or entire screen. Echo records up to 90s."}
                   {phase === "learning" &&
-                    "Gemini 3.5 Flash is analyzing your frames to extract intent, steps, and decision points."}
+                    "Gemini is watching the video to extract the intent, ordered steps, and decision points."}
                   {phase === "review" &&
                     "Review the steps below, name your skill, then save it to your library."}
                 </p>
@@ -792,8 +814,8 @@ export default function RecordPage() {
             </h3>
             <ul className="text-body-sm space-y-2">
               <li>• Echo uses your browser's built-in screen capture — no install.</li>
-              <li>• Frames are captured every 2 seconds and sent to Gemini Vision.</li>
-              <li>• Gemini reconstructs the intent and ordered steps from your frames.</li>
+              <li>• The full screen recording (up to 90s) is sent to Gemini.</li>
+              <li>• Gemini reconstructs the intent, steps, and decision points.</li>
               <li>• Or skip the recording entirely — type a name + steps and save.</li>
             </ul>
           </FeatureCard>

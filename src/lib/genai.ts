@@ -2,13 +2,23 @@
  * Unified Gemini client.
  *
  * Tries in order:
- *   1. `@google-cloud/vertexai` (uses the GCP project's billing — works
- *      when AI Studio prepay credits are exhausted).
- *   2. `@google/genai` (uses the AI Studio API key — fast + cheap when
- *      free tier is available).
+ *   1. `@google/genai` against AI Studio using the model the caller
+ *      requested (most production-friendly path; uses the API key
+ *      configured in `GEMINI_API_KEY`).
+ *   2. `@google-cloud/vertexai` using the GCP project's billing — only
+ *      attempted as a fallback for the text-only path. Vertex AI
+ *      cannot be used for video inline data on Vercel because we have
+ *      no WIF / ADC setup there, so the multimodal path skips it
+ *      entirely.
  *
- * Returns a small `{ generate, model }` interface so callers don't have
- * to care which underlying SDK served the request.
+ * Returns `{ text, source }` on success, or `null` when every attempt
+ * failed. The caller is expected to surface a clear error to the
+ * client in that case (the API routes do this — no silent mock).
+ *
+ * Model selection: the caller's `args.model` is the primary choice.
+ * We also accept a small hard-coded fallback list (in case the
+ * caller's preferred model is rate-limited or temporarily unavailable
+ * on AI Studio).
  */
 
 type GenerateArgs = {
@@ -18,10 +28,13 @@ type GenerateArgs = {
   temperature?: number;
   maxOutputTokens?: number;
   /**
-   * Optional inline images for multimodal calls. Each entry is a base64
-   * string (no "data:" prefix) and its MIME type (usually "image/jpeg"
-   * or "image/png"). When provided, the request goes through Gemini's
-   * multimodal `contents[].parts` shape.
+   * Optional inline media for multimodal calls. Each entry is a base64
+   * string (no "data:" prefix) and its MIME type:
+   *   - "image/jpeg" / "image/png" for stills
+   *   - "video/webm" / "video/mp4" for short screen recordings
+   * When provided, the request goes through Gemini's multimodal
+   * `contents[].parts` shape and is limited to AI Studio (Vertex AI
+   * path is skipped — see header comment).
    */
   images?: Array<{ mimeType: string; data: string }>;
 };
@@ -31,62 +44,30 @@ type GenerateResult = { text: string; source: "vertex" | "aistudio" };
 let _vertex: import("@google-cloud/vertexai").VertexAI | null = null;
 
 /**
- * Default model that satisfies the "Gemini 3.5 or newer" requirement.
- * Used when the caller doesn't specify a model explicitly.
+ * Default model for plain-text calls. The Record page passes an
+ * explicit `args.model` ("gemini-2.5-flash") so this is only the
+ * default for callers that don't specify one (e.g. the agent
+ * orchestrator's JSON extraction helper).
  */
-export const PREFERRED_MODEL = "gemini-3.5-flash";
+export const PREFERRED_MODEL = "gemini-2.5-flash";
 
 /**
- * Ordered list of model names to try. We try Gemini 3.5+ first (the
- * hackathon requirement), then fall back to whatever the project's
- * Vertex AI actually has provisioned (usually 2.5-flash).
+ * Hard-coded fallback list. The caller's `args.model` is tried first;
+ * these are tried only if it fails. Keep this list small and only
+ * include model names that are GA on AI Studio today.
  */
-const MODEL_FALLBACKS: { model: string; source: "vertex" | "aistudio" }[] = [
-  { model: "gemini-3.5-flash", source: "aistudio" },   // satisfies "3.5 or newer" rule
-  { model: "gemini-3-flash", source: "aistudio" },     // newer alias on AI Studio
-  { model: "gemini-2.5-flash", source: "vertex" },     // Vertex AI default
-  { model: "gemini-2.5-flash-lite", source: "vertex" }, // smaller Vertex AI fallback
+const FALLBACK_MODELS: { model: string; source: "vertex" | "aistudio" }[] = [
+  { model: "gemini-2.5-flash", source: "aistudio" },
+  { model: "gemini-2.0-flash", source: "aistudio" },
+  { model: "gemini-2.5-flash-lite", source: "aistudio" },
 ];
 
-async function tryVertexOnce(modelName: string, args: GenerateArgs): Promise<GenerateResult | null> {
-  if (process.env.GCP_ENABLED === "false") return null;
-  try {
-    if (!_vertex) {
-      const { VertexAI } = await import("@google-cloud/vertexai");
-      _vertex = new VertexAI({
-        project: process.env.GCP_PROJECT_ID || "echo-hackathon-2026",
-        location: process.env.GCP_VERTEX_LOCATION || "us-central1",
-      });
-    }
-    const model = _vertex.getGenerativeModel({
-      model: modelName,
-      generationConfig: {
-        responseMimeType: args.responseMimeType,
-        temperature: args.temperature ?? 0.4,
-        maxOutputTokens: args.maxOutputTokens ?? 4096,
-      },
-    });
-    const parts: unknown[] = [{ text: args.prompt }];
-    if (args.images && args.images.length > 0) {
-      for (const img of args.images) {
-        parts.push({ inline_data: { mime_type: img.mimeType, data: img.data } });
-      }
-    }
-    const r = await model.generateContent({
-      contents: [{ role: "user", parts: parts as never[] }],
-    });
-    const text = r.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-    if (!text) return null;
-    return { text, source: "vertex" };
-  } catch (e) {
-    console.warn("[genai] vertex/" + modelName + " failed:", (e as Error).message?.slice(0, 120));
-    return null;
-  }
-}
-
-// Hard cap on a single Gemini call so a stalled request can't burn the
-// whole serverless function budget. 50s leaves headroom under the 60s
-// Vercel ceiling.
+/**
+ * Hard cap on a single Gemini call so a stalled request can't burn the
+ * whole serverless function budget. 50s leaves headroom under the 60s
+ * Vercel ceiling (and well under the 120s ceiling if the user has
+ * upgraded to Pro).
+ */
 const GEMINI_TIMEOUT_MS = 50_000;
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -101,9 +82,33 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   ]);
 }
 
-async function tryAIStudioOnce(modelName: string, args: GenerateArgs): Promise<GenerateResult | null> {
+/**
+ * Build the list of model attempts: caller's choice first (marked
+ * "aistudio" so we always go through the API key path), then the
+ * hard-coded fallbacks.
+ */
+function attemptsFor(args: GenerateArgs): { model: string; source: "vertex" | "aistudio" }[] {
+  const out: { model: string; source: "vertex" | "aistudio" }[] = [];
+  if (args.model) {
+    out.push({ model: args.model, source: "aistudio" });
+  }
+  for (const fb of FALLBACK_MODELS) {
+    if (!out.some((a) => a.model === fb.model)) {
+      out.push(fb);
+    }
+  }
+  return out;
+}
+
+async function tryAIStudioOnce(
+  modelName: string,
+  args: GenerateArgs
+): Promise<GenerateResult | null> {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
+  if (!apiKey) {
+    console.warn("[genai] GEMINI_API_KEY not set — skipping aistudio/" + modelName);
+    return null;
+  }
   try {
     const { GoogleGenAI } = await import("@google/genai");
     const genai = new GoogleGenAI({ apiKey });
@@ -129,28 +134,70 @@ async function tryAIStudioOnce(modelName: string, args: GenerateArgs): Promise<G
       `AI Studio ${modelName}`
     );
     const text = r.text ?? "";
-    if (!text) return null;
+    if (!text) {
+      console.warn(`[genai] aistudio/${modelName} returned empty text`);
+      return null;
+    }
     return { text, source: "aistudio" };
   } catch (e) {
-    console.warn("[genai] aiststudio/" + modelName + " failed:", (e as Error).message?.slice(0, 120));
+    const msg = (e as Error)?.message ?? String(e);
+    console.warn(`[genai] aistudio/${modelName} failed: ${msg.slice(0, 200)}`);
     return null;
   }
 }
 
-async function tryVertex(args: GenerateArgs): Promise<GenerateResult | null> {
-  for (const fb of MODEL_FALLBACKS.filter((m) => m.source === "vertex")) {
-    const r = await tryVertexOnce(fb.model, args);
-    if (r) return r;
+async function tryVertexOnce(
+  modelName: string,
+  args: GenerateArgs
+): Promise<GenerateResult | null> {
+  if (process.env.GCP_ENABLED === "false") return null;
+  // Vertex AI cannot accept inline media on Vercel — there's no ADC
+  // setup that would let it authenticate. Skip entirely for multimodal.
+  if (args.images && args.images.length > 0) return null;
+  try {
+    if (!_vertex) {
+      const { VertexAI } = await import("@google-cloud/vertexai");
+      _vertex = new VertexAI({
+        project: process.env.GCP_PROJECT_ID || "echo-hackathon-2026",
+        location: process.env.GCP_VERTEX_LOCATION || "us-central1",
+      });
+    }
+    const model = _vertex.getGenerativeModel({
+      model: modelName,
+      generationConfig: {
+        responseMimeType: args.responseMimeType,
+        temperature: args.temperature ?? 0.4,
+        maxOutputTokens: args.maxOutputTokens ?? 4096,
+      },
+    });
+    const r = await withTimeout(
+      model.generateContent({
+        contents: [{ role: "user", parts: [{ text: args.prompt }] }],
+      }),
+      GEMINI_TIMEOUT_MS,
+      `Vertex ${modelName}`
+    );
+    const text = r.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    if (!text) {
+      console.warn(`[genai] vertex/${modelName} returned empty text`);
+      return null;
+    }
+    return { text, source: "vertex" };
+  } catch (e) {
+    const msg = (e as Error)?.message ?? String(e);
+    console.warn(`[genai] vertex/${modelName} failed: ${msg.slice(0, 200)}`);
+    return null;
   }
-  return null;
 }
 
-async function tryAIStudio(args: GenerateArgs): Promise<GenerateResult | null> {
-  for (const fb of MODEL_FALLBACKS.filter((m) => m.source === "aistudio")) {
-    const r = await tryAIStudioOnce(fb.model, args);
-    if (r) return r;
+async function tryOne(
+  attempt: { model: string; source: "vertex" | "aistudio" },
+  args: GenerateArgs
+): Promise<GenerateResult | null> {
+  if (attempt.source === "aistudio") {
+    return tryAIStudioOnce(attempt.model, args);
   }
-  return null;
+  return tryVertexOnce(attempt.model, args);
 }
 
 /**
@@ -187,56 +234,47 @@ function extractJson(text: string): unknown | null {
 }
 
 /**
- * Call Gemini with fallback. Tries AI Studio with Gemini 3.5+ first
- * (satisfies hackathon "Gemini 3.5 or newer" requirement), then Vertex
- * AI (uses GCP project billing), then back to AI Studio 2.5 if all
- * else fails. Returns null when everything fails — caller is expected
- * to fall back to a mock.
+ * Call Gemini with fallback. Tries the caller's `args.model` first via
+ * AI Studio, then walks a small hard-coded fallback list. Returns
+ * `null` when everything fails — caller surfaces a real error.
  *
  * If the response text contains JSON embedded in prose/markdown (which
- * happens with `gemini-3.5-flash` via AI Studio — it sometimes ignores
- * `responseMimeType: application/json`), the extracted JSON string is
- * returned in `text`. This keeps the existing `JSON.parse(text)` in
- * the API routes working without any changes.
+ * happens with some models that ignore `responseMimeType`), the
+ * extracted JSON string is returned in `text` so callers can keep
+ * doing `JSON.parse(text)`.
  */
 export async function generateJson(
   args: Omit<GenerateArgs, "responseMimeType"> & { responseMimeType?: "application/json" }
 ): Promise<GenerateResult | null> {
   const mime = args.responseMimeType ?? "application/json";
-  // Try AI Studio first
-  const ai = await tryAIStudio({ ...args, responseMimeType: mime });
-  if (ai) {
-    const extracted = extractJson(ai.text);
+  const attempts = attemptsFor(args);
+  for (const attempt of attempts) {
+    const r = await tryOne(attempt, { ...args, responseMimeType: mime });
+    if (!r) continue;
+    // We have a response. Try to extract JSON. If the model returned
+    // parseable JSON (or JSON embedded in prose), return it; otherwise
+    // pass the raw text through so the caller can decide.
+    const extracted = extractJson(r.text);
     if (extracted !== null) {
-      return { text: JSON.stringify(extracted), source: ai.source };
+      return { text: JSON.stringify(extracted), source: r.source };
     }
-    // Raw text didn't contain parseable JSON; if it looks like JSON
-    // already, just pass through.
-    if (ai.text.trim().startsWith("{") || ai.text.trim().startsWith("[")) {
-      return ai;
+    if (r.text.trim().startsWith("{") || r.text.trim().startsWith("[")) {
+      return r;
     }
+    // The model gave us prose without JSON — try the next fallback.
+    console.warn(`[genai] ${attempt.source}/${attempt.model} returned non-JSON prose; trying next`);
   }
-  // Try Vertex AI
-  const vertex = await tryVertex({ ...args, responseMimeType: mime });
-  if (vertex) {
-    const extracted = extractJson(vertex.text);
-    if (extracted !== null) {
-      return { text: JSON.stringify(extracted), source: vertex.source };
-    }
-    if (vertex.text.trim().startsWith("{") || vertex.text.trim().startsWith("[")) {
-      return vertex;
-    }
-  }
-  return ai ?? vertex;
+  return null;
 }
 
 /**
- * Strict multimodal call. Same fallback chain as `generateJson` (AI Studio
- * first, Vertex AI second) but requires the caller to pass actual images
- * and returns `null` on any failure — never a mock. This is the path the
- * Record page uses: if Gemini can't analyze the captured frames, the
- * caller (the API route) surfaces the error to the client so the user
- * can fall back to manual skill creation.
+ * Strict multimodal call. Same fallback chain as `generateJson` (caller
+ * model first via AI Studio, then hard-coded fallbacks) but requires
+ * the caller to pass actual media and returns `null` on any failure —
+ * never a mock. This is the path the Record page uses: if Gemini can't
+ * analyze the captured video, the caller (the API route) surfaces the
+ * error to the client so the user can fall back to manual skill
+ * creation.
  */
 export async function generateJsonWithImages(
   args: Omit<GenerateArgs, "responseMimeType" | "images"> & {
