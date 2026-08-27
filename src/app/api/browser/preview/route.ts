@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { chromium as playwright } from "playwright-core";
 
 /**
  * POST /api/browser/preview
@@ -10,17 +11,28 @@ import { NextRequest, NextResponse } from "next/server";
  * screenshot, and streams the result back so the BROWSER CONSOLE
  * pane renders an actual screenshot of the page the agent is on.
  *
- * TEMP: simplified to isolate the runtime 500 error.
+ * Step 2: just add the playwright-core import and a try-catch around
+ * everything to see if the import itself is the issue.
  */
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 10; // Vercel Hobby max
+export const maxDuration = 10;
 
 export async function POST(req: NextRequest) {
-  return NextResponse.json({
-    ok: true,
-    message: "minimal route works",
-    ts: Date.now(),
-  });
+  try {
+    console.log("[browser] route entered, playwright loaded:", typeof playwright);
+    return NextResponse.json({
+      ok: true,
+      message: "playwright-core import works",
+      playwrightType: typeof playwright,
+      playwrightLaunchType: typeof playwright?.launch,
+      ts: Date.now(),
+    });
+  } catch (err) {
+    return NextResponse.json({
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    }, { status: 200 });
+  }
 }
