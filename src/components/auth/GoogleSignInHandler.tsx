@@ -4,37 +4,27 @@ import { useEffect, useState } from "react";
 import { signInWithGoogleProfile } from "@/lib/auth/auth";
 
 /**
- * Decode a Google Identity Services ID-token JWT. We don't verify the
- * signature here — the id_token was issued by Google over HTTPS to a
- * redirect_uri that's whitelisted in our OAuth client, and the
- * production path also sends a server-side check (TODO post-hackathon).
- * For a hackathon demo this is fine.
- */
-function decodeJwt<T = Record<string, unknown>>(token: string): T | null {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const json = atob(
-      payload + "===".slice(0, (4 - (payload.length % 4)) % 4)
-    );
-    return JSON.parse(json) as T;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Renders nothing, but on mount checks `window.location.hash` for the
- * `id_token` parameter that Google Identity Services appends when the
- * user signs in via `ux_mode: "redirect"`. If present, it signs the
- * user in via the same `signInWithGoogleProfile()` path used by the
- * legacy FedCM `gsi.prompt()` flow, then navigates to /dashboard.
+ * Renders nothing on a normal page load, but on mount checks
+ * `window.location` for one of two Google OAuth callback shapes:
  *
- * Lives on the home page because the OAuth client "Echo Web Client"
- * is configured with `https://echo-one-liard.vercel.app` (the site
- * root) as a single authorized redirect URI, and we want to keep
- * the hackathon setup as-is.
+ *   1. **Authorization Code flow** (the one we use now):
+ *      `?code=...&state=...` in the query string. The client posts
+ *      the code to `/api/auth/google/exchange`, which redeems it
+ *      for an id_token using the server-side GOOGLE_CLIENT_SECRET
+ *      and returns the user profile. The client then calls
+ *      `signInWithGoogleProfile` and navigates to /dashboard.
+ *
+ *   2. **Legacy GSI redirect flow** (still in the bundle for the
+ *      case where the OAuth client only has the root configured
+ *      and someone triggers a `gsi.prompt()` with ux_mode:
+ *      "redirect" via the GSI library):
+ *      `#id_token=...&...` in the URL fragment. Same destination,
+ *      just decodes the JWT locally.
+ *
+ * Lives on the home page because the OAuth client "Echo Web
+ * Client" is configured with `https://echo-one-liard.vercel.app`
+ * (the site root) as a single authorized redirect URI, and we
+ * want to keep the hackathon setup as-is.
  */
 export function GoogleSignInHandler() {
   const [status, setStatus] = useState<"checking" | "idle" | "error">(
@@ -44,52 +34,96 @@ export function GoogleSignInHandler() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+
+    // 1) Authorization code in the query string.
+    const search = new URLSearchParams(window.location.search);
+    const code = search.get("code");
+    const stateParam = search.get("state");
+    const oauthError = search.get("error");
+
+    // 2) Legacy GSI id_token in the URL fragment.
     const hash = window.location.hash;
-    if (!hash) {
+    const fragment = hash ? new URLSearchParams(hash.substring(1)) : null;
+    const idToken = fragment?.get("id_token") ?? null;
+    const fragmentError = fragment?.get("error") ?? null;
+
+    if (!code && !oauthError && !idToken && !fragmentError) {
       setStatus("idle");
       return;
     }
-    // GSI puts the id_token in the URL fragment, e.g. "#id_token=...&..."
-    const params = new URLSearchParams(hash.substring(1));
-    const idToken = params.get("id_token");
-    const oauthError = params.get("error");
-    if (!idToken && !oauthError) {
-      setStatus("idle");
-      return;
-    }
-    // Clean the URL immediately so a back-button press doesn't replay
-    // the callback and so the address bar doesn't leak the id_token.
-    window.history.replaceState(null, "", window.location.pathname);
+
+    // Always clean the URL so a back-button press doesn't replay
+    // the callback and so the address bar doesn't leak secrets.
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + window.location.hash
+    );
+
     if (oauthError) {
       setError(oauthError);
       setStatus("error");
       return;
     }
-    const claims = decodeJwt<{
-      sub?: string;
-      email?: string;
-      name?: string;
-      picture?: string;
-    }>(idToken!);
-    if (!claims?.sub || !claims.email || !claims.name) {
-      setError("Google didn't return a usable profile.");
+    if (fragmentError) {
+      setError(fragmentError);
       setStatus("error");
       return;
     }
-    const result = signInWithGoogleProfile({
-      sub: claims.sub,
-      email: claims.email,
-      name: claims.name,
-      picture: claims.picture,
-    });
-    if (!result.ok) {
-      setError(result.error);
-      setStatus("error");
+
+    if (idToken) {
+      // Legacy path: decode the id_token directly.
+      const claims = decodeJwt<{
+        sub?: string;
+        email?: string;
+        name?: string;
+        picture?: string;
+      }>(idToken);
+      if (!claims?.sub || !claims.email || !claims.name) {
+        setError("Google didn't return a usable profile.");
+        setStatus("error");
+        return;
+      }
+      const result = signInWithGoogleProfile({
+        sub: claims.sub,
+        email: claims.email,
+        name: claims.name,
+        picture: claims.picture,
+      });
+      if (!result.ok) {
+        setError(result.error);
+        setStatus("error");
+        return;
+      }
+      window.location.href = "/dashboard";
       return;
     }
-    // Hard navigation so the dashboard layout re-reads the session
-    // and the "(Google)" pill in the sidebar populates.
-    window.location.href = "/dashboard";
+
+    // Authorization code path: verify state then exchange.
+    if (code) {
+      const expectedState = sessionStorage.getItem("echo.oauth.state");
+      if (expectedState && stateParam && expectedState !== stateParam) {
+        setError("OAuth state mismatch — try signing in again.");
+        setStatus("error");
+        return;
+      }
+      sessionStorage.removeItem("echo.oauth.state");
+      handleCodeExchange(code).then(
+        (profile) => {
+          const result = signInWithGoogleProfile(profile);
+          if (!result.ok) {
+            setError(result.error);
+            setStatus("error");
+            return;
+          }
+          window.location.href = "/dashboard";
+        },
+        (err: Error) => {
+          setError(err.message || "Google sign-in failed.");
+          setStatus("error");
+        }
+      );
+    }
   }, []);
 
   if (status === "error" && error) {
@@ -112,4 +146,54 @@ export function GoogleSignInHandler() {
     );
   }
   return null;
+}
+
+async function handleCodeExchange(
+  code: string
+): Promise<{ sub: string; email: string; name: string; picture?: string }> {
+  const resp = await fetch("/api/auth/google/exchange", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      code,
+      redirectUri: window.location.origin,
+    }),
+  });
+  const data = (await resp.json().catch(() => ({}))) as {
+    sub?: string;
+    email?: string;
+    name?: string;
+    picture?: string;
+    error?: string;
+    details?: string;
+  };
+  if (!resp.ok || data.error) {
+    const msg = data.details
+      ? `${data.error} — ${data.details}`
+      : data.error || `Server returned ${resp.status}`;
+    throw new Error(msg);
+  }
+  if (!data.sub || !data.email || !data.name) {
+    throw new Error("Server returned a malformed profile.");
+  }
+  return {
+    sub: data.sub,
+    email: data.email,
+    name: data.name,
+    picture: data.picture,
+  };
+}
+
+function decodeJwt<T = Record<string, unknown>>(token: string): T | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json = atob(
+      payload + "===".slice(0, (4 - (payload.length % 4)) % 4)
+    );
+    return JSON.parse(json) as T;
+  } catch {
+    return null;
+  }
 }

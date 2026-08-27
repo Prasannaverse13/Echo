@@ -41,40 +41,24 @@ function GoogleGLogo({ size = 18 }: { size?: number }) {
   );
 }
 
-// Runtime type for the Identity Services (`accounts.id`) surface.
-// We type-guard with this inline rather than augmenting the
-// `Window.google` global, because the project already declares
-// a strict (and incompatible) shape for `accounts.oauth2` in
-// src/app/(dashboard)/integrations/page.tsx.
-type Gsi = {
-  initialize: (config: {
-    client_id: string;
-    callback: (response: { credential: string }) => void;
-    auto_select?: boolean;
-    cancel_on_tap_outside?: boolean;
-    // ux_mode: "redirect" makes prompt() navigate the user to
-    // Google's full sign-in page, then bounce them back to
-    // `redirect_uri` with an `id_token` in the URL fragment.
-    ux_mode?: "popup" | "redirect";
-    redirect_uri?: string;
-  }) => void;
-  prompt: (notification?: (n: { isNotDisplayed: () => boolean; isSkippedMoment: () => boolean; isDismissedMoment: () => boolean; getDismissedReason: () => string | undefined }) => void) => void;
-};
-function readGsi(): Gsi | null {
-  if (typeof window === "undefined") return null;
-  const g = (window as unknown as { google?: { accounts?: { id?: Gsi } } })
-    .google;
-  return g?.accounts?.id ?? null;
-}
-
 /**
  * The "Continue with Google" button. Clicking it either:
- *   - runs the real Google Identity Services OAuth 2.0 redirect
- *     flow (when `NEXT_PUBLIC_GOOGLE_CLIENT_ID` is set), or
+ *   - runs the real Google OAuth 2.0 consent flow (when
+ *     `NEXT_PUBLIC_GOOGLE_CLIENT_ID` is set), or
  *   - opens an on-page demo Google-account picker.
  *
- * Either way, on success the user is signed in via the same
- * `signInWithGoogleProfile()` path used by the email/password flow.
+ * The real flow bypasses GSI entirely: we redirect straight to
+ * `https://accounts.google.com/o/oauth2/v2/auth?response_type=code`
+ * with the configured `redirect_uri`. Google bounces the user
+ * back to that URL with `?code=...&state=...` in the query string.
+ * The home page (GoogleSignInHandler) reads that, POSTs the code
+ * to `/api/auth/google/exchange`, and signs the user in via
+ * `signInWithGoogleProfile()`.
+ *
+ * We avoid the GSI library on purpose: its default UX is a small
+ * FedCM "One Tap" card (not the full Google sign-in page the
+ * user expects), and it gets blocked when Chrome has FedCM
+ * disabled at the site level.
  */
 export function GoogleButton({
   intent = "signin",
@@ -92,18 +76,32 @@ export function GoogleButton({
     setClientId(getGoogleClientId());
   }, []);
 
-  // Load Google Identity Services script if we have a client ID.
-  useEffect(() => {
-    if (!clientId) return;
-    const id = "gsi-client";
-    if (document.getElementById(id)) return;
-    const s = document.createElement("script");
-    s.id = id;
-    s.src = "https://accounts.google.com/gsi/client";
-    s.async = true;
-    s.defer = true;
-    document.head.appendChild(s);
-  }, [clientId]);
+  function onClick() {
+    if (busy) return;
+    setError(null);
+    if (clientId && typeof window !== "undefined") {
+      // Build the OAuth consent URL ourselves. The OAuth client
+      // "Echo Web Client" has `https://echo-one-liard.vercel.app`
+      // configured as an authorized redirect URI, so the user
+      // bounces back to the site root with `?code=...&state=...`
+      // and GoogleSignInHandler picks it up.
+      const state = crypto.randomUUID();
+      sessionStorage.setItem("echo.oauth.state", state);
+      const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+      authUrl.searchParams.set("client_id", clientId);
+      authUrl.searchParams.set("redirect_uri", window.location.origin);
+      authUrl.searchParams.set("response_type", "code");
+      authUrl.searchParams.set("scope", "openid email profile");
+      authUrl.searchParams.set("state", state);
+      // Always show the account chooser — even if the user already
+      // has a Google session in the browser, the OpenAI-style "Pick
+      // an account" page is what we want.
+      authUrl.searchParams.set("prompt", "select_account");
+      window.location.href = authUrl.toString();
+      return;
+    }
+    setShowPicker(true);
+  }
 
   function handleProfile(profile: GoogleProfile) {
     setBusy(true);
@@ -118,41 +116,6 @@ export function GoogleButton({
     // Hard navigation so the dashboard layout re-reads the session
     // and the "(Google)" pill in the sidebar populates.
     window.location.href = "/dashboard";
-  }
-
-  function onClick() {
-    if (busy) return;
-    setError(null);
-    const gsi = readGsi();
-    if (clientId && gsi) {
-      // Use OAuth 2.0 redirect flow (ux_mode: "redirect") so the
-      // user sees the full Google sign-in page, not the small
-      // FedCM "One Tap" card. GSI handles the entire redirect →
-      // Google consent → back-with-id_token flow for us; we pick
-      // up the id_token on the home page via GoogleSignInHandler.
-      //
-      // The redirect_uri MUST be in the OAuth client's authorized
-      // list. "Echo Web Client" is configured with the site root
-      // (https://echo-one-liard.vercel.app) as its redirect URI, so
-      // the user bounces back to / with the id_token in the URL
-      // fragment. GoogleSignInHandler then signs them in and
-      // navigates to /dashboard.
-      gsi.initialize({
-        client_id: clientId,
-        callback: () => {
-          // No-op: in redirect mode the callback fires on the
-          // redirect_uri page, but our GoogleSignInHandler reads
-          // the id_token from window.location.hash directly. This
-          // callback is here only to satisfy GSI's type.
-        },
-        ux_mode: "redirect",
-        redirect_uri:
-          typeof window !== "undefined" ? window.location.origin : undefined,
-      });
-      gsi.prompt();
-      return;
-    }
-    setShowPicker(true);
   }
 
   const buttonText =
