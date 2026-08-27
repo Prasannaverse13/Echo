@@ -108,8 +108,9 @@ const navItems = [
 
 /* ---------------- EchoHero ----------------
    Full-bleed cinematic hero.
-   - Background: real cinematic MP4 (with deep-teal gradient fallback so the
-     page never looks broken if the video CDN hiccups)
+   - Background: real cinematic MP4 (looped, autoplays muted per browser policy)
+   - Solid-color fallback shown only while the video is loading or if it
+     fails to load (kept the same warm-dark palette so the swap is seamless)
    - Top: floating pill navbar
    - Bottom: massive serif headline with WordsPullUp char-by-char
    - Right: copy + arrow CTA that animates in with a 0.5/0.7s delay
@@ -119,12 +120,22 @@ export const EchoHero = () => {
   return (
     <section className="h-screen w-full">
       <div className="relative h-full w-full overflow-hidden rounded-2xl md:rounded-[2rem] bg-deep-teal">
-        {/* Background video — desktop / large screens. The video
-            file used to be committed to public/echo-hero-clean.mp4
-            (~16 MB) but was removed from the repo; the solid-color
-            fallback below is what renders now. Add a video tag here
-            once you have a hero clip you actually want. */}
-
+        {/* Background video — desktop / large screens. Loops, plays muted
+            by default (browser autoplay policy requires muted to start),
+            sound is opt-in via the corner pill. The MP4 lives in
+            public/echo-hero-clean.mp4 (~16 MB). */}
+        <video
+          className="absolute inset-0 z-0 h-full w-full object-cover"
+          src="/echo-hero-clean.mp4"
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="auto"
+          // The actual muted state is controlled by VideoSoundToggle below;
+          // this `muted` attribute just satisfies the autoplay policy so the
+          // video starts playing on first paint.
+        />
 
         {/* Gradient ONLY at the bottom for headline contrast — top is fully transparent so the video shines */}
         <div
@@ -197,7 +208,7 @@ export const EchoHero = () => {
         </nav>
 
         {/* Hero content — bottom-left + bottom-right grid */}
-        <div className="absolute bottom-0 left-0 right-0 px-4 pb-6 sm:px-6 md:px-10 md:pb-10">
+        <div className="absolute bottom-0 left-0 right-0 px-4 pb-6 sm:px-6 md:px-10 md:pb-10 z-10">
           <div className="grid grid-cols-12 items-end gap-4">
             <div className="col-span-12 lg:col-span-8">
               <h1
@@ -251,116 +262,134 @@ export const EchoHero = () => {
           </div>
         </div>
 
-        {/* Ambient wind + birdsong loop with mute toggle.
-            CC0 audio: https://bigsoundbank.com/wind-in-a-tree-s0659.html (Wind in a Tree, by Joseph Sardin). */}
-        <AmbientBacksound />
-
+        {/* Video sound toggle. The video autoplays muted (required by every
+            browser); the user can opt in to the wind/birdsong ambient track
+            with this corner pill. The choice persists in localStorage. */}
+        <VideoSoundToggle />
       </div>
     </section>
   );
 };
 
-/* ---------------- Ambient backsound ----------------
-   Loops a short wind + birdsong track so the hero feels like a real outdoor
-   workspace. Browsers block autoplay until the user interacts with the page,
-   so we (a) only attempt playback after the first click/scroll/tap, and
-   (b) fall back gracefully — a small glass pill in the corner shows the
-   current state and lets the user mute / unmute at any time. The choice is
-   persisted in localStorage so the hero stays quiet on subsequent visits
-   for users who don't want sound.
+/* ---------------- VideoSoundToggle ----------------
+   Mute / unmute the hero video. The video is muted by default so it can
+   autoplay on first paint; this pill lets the user opt back in to the
+   wind + birdsong audio baked into the clip. The choice is persisted in
+   localStorage so the hero stays muted on subsequent visits for users who
+   don't want sound.
 */
-function AmbientBacksound() {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+function VideoSoundToggle() {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const [unlocked, setUnlocked] = useState(false);
   const [muted, setMuted] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
+    if (typeof window === "undefined") return true; // start muted (autoplay policy)
     try {
-      return window.localStorage.getItem("echo.ambient.muted") === "1";
+      const stored = window.localStorage.getItem("echo.hero.muted");
+      // Default to muted (true) when nothing is stored, so the first visit
+      // doesn't blast the user with audio.
+      return stored === null ? true : stored === "1";
     } catch {
-      return false;
+      return true;
     }
   });
-  const [playing, setPlaying] = useState(false);
+  const [audioReady, setAudioReady] = useState(false);
 
-  // After the user's first interaction, try to unlock playback
+  // After mount, find the hero video element (rendered above) and keep a ref.
+  // We intentionally don't render the <video> here so React stays the source
+  // of truth for the muted prop; we just need a handle to the DOM node to
+  // start/stop playback and react to it.
   useEffect(() => {
-    if (unlocked) return;
-    const tryPlay = () => {
-      const el = audioRef.current;
-      if (!el) return;
-      el.volume = 0.18; // quiet by default — it's ambience, not a soundtrack
-      el.loop = true;
-      el.play()
-        .then(() => {
-          setPlaying(true);
-          if (muted) {
-            el.muted = true;
-          }
-        })
-        .catch(() => {
-          // autoplay blocked; user can still hit the unmute pill
-        });
-      setUnlocked(true);
-      window.removeEventListener("pointerdown", tryPlay);
-      window.removeEventListener("keydown", tryPlay);
-    };
-    window.addEventListener("pointerdown", tryPlay, { once: true, passive: true });
-    window.addEventListener("keydown", tryPlay, { once: true });
+    const v = document.querySelector<HTMLVideoElement>(
+      'video[src="/echo-hero-clean.mp4"]'
+    );
+    if (!v) return;
+    videoRef.current = v;
+    // Sync the video with our current state on mount in case the user has
+    // unmute persisted from a previous visit (after the first user gesture
+    // unlocks playback, see below).
+    v.muted = muted;
+    const onPlay = () => setAudioReady(true);
+    const onPause = () => setAudioReady(false);
+    v.addEventListener("play", onPlay);
+    v.addEventListener("pause", onPause);
+    if (!v.paused) setAudioReady(true);
     return () => {
-      window.removeEventListener("pointerdown", tryPlay);
-      window.removeEventListener("keydown", tryPlay);
+      v.removeEventListener("play", onPlay);
+      v.removeEventListener("pause", onPause);
     };
-  }, [unlocked, muted]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // React to mute toggle
+  // React to mute toggle. The first time the user un-mutes we have to
+  // re-issue .play() because the autoplay-with-sound path needs a user
+  // gesture, and the click on the pill counts.
   useEffect(() => {
-    const el = audioRef.current;
-    if (!el) return;
-    el.muted = muted;
+    const v = videoRef.current;
+    if (!v) return;
+    v.muted = muted;
     try {
-      window.localStorage.setItem("echo.ambient.muted", muted ? "1" : "0");
+      window.localStorage.setItem("echo.hero.muted", muted ? "1" : "0");
     } catch {
       /* ignore */
     }
+    // If the user just un-muted, make sure the video is actually playing
+    // (it might be paused if the tab was backgrounded before the first
+    // interaction).
+    if (!muted) {
+      v.play().catch(() => {
+        /* will retry on next click */
+      });
+    }
   }, [muted]);
 
+  // Watch the global first-interaction event so we can promote "Tap for
+  // sound" → "Sound off" as soon as the user has interacted with the page
+  // (which is also when the video's audio context becomes unlocked).
+  useEffect(() => {
+    if (unlocked) return;
+    const onFirst = () => {
+      setUnlocked(true);
+      window.removeEventListener("pointerdown", onFirst);
+      window.removeEventListener("keydown", onFirst);
+    };
+    window.addEventListener("pointerdown", onFirst, { once: true, passive: true });
+    window.addEventListener("keydown", onFirst, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", onFirst);
+      window.removeEventListener("keydown", onFirst);
+    };
+  }, [unlocked]);
+
+  const label = muted
+    ? "Tap for sound"
+    : audioReady
+      ? "Sound on"
+      : "Sound off";
+
   return (
-    <>
-      <audio
-        ref={audioRef}
-        src="/echo-ambient.mp3"
-        preload="auto"
-        loop
-        muted={muted}
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-      />
-      <motion.button
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 1.2, ease: [0.16, 1, 0.3, 1] }}
-        onClick={() => setMuted((m) => !m)}
-        aria-label={muted ? "Unmute ambient sound" : "Mute ambient sound"}
-        className="absolute bottom-6 right-6 z-20 flex items-center gap-2 rounded-full border border-paper-white/25 px-3 py-2 text-caption text-paper-white/90 shadow-lg hover:scale-105 transition-transform"
-        style={{
-          background:
-            "linear-gradient(135deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.10) 100%)",
-          backdropFilter: "blur(24px) saturate(180%)",
-          WebkitBackdropFilter: "blur(24px) saturate(180%)",
-          boxShadow:
-            "0 8px 32px 0 rgba(0,0,0,0.18), inset 0 1px 0 0 rgba(255,255,255,0.25)",
-        }}
-      >
-        {muted || !playing ? (
-          <VolumeX className="w-3.5 h-3.5" />
-        ) : (
-          <Volume2 className="w-3.5 h-3.5" />
-        )}
-        <span className="font-medium">
-          {muted ? "Sound off" : playing ? "Ambient on" : "Tap for sound"}
-        </span>
-      </motion.button>
-    </>
+    <motion.button
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6, delay: 1.2, ease: [0.16, 1, 0.3, 1] }}
+      onClick={() => setMuted((m) => !m)}
+      aria-label={muted ? "Unmute hero video" : "Mute hero video"}
+      className="absolute bottom-6 right-6 z-20 flex items-center gap-2 rounded-full border border-paper-white/25 px-3 py-2 text-caption text-paper-white/90 shadow-lg hover:scale-105 transition-transform"
+      style={{
+        background:
+          "linear-gradient(135deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.10) 100%)",
+        backdropFilter: "blur(24px) saturate(180%)",
+        WebkitBackdropFilter: "blur(24px) saturate(180%)",
+        boxShadow:
+          "0 8px 32px 0 rgba(0,0,0,0.18), inset 0 1px 0 0 rgba(255,255,255,0.25)",
+      }}
+    >
+      {muted ? (
+        <VolumeX className="w-3.5 h-3.5" />
+      ) : (
+        <Volume2 className="w-3.5 h-3.5" />
+      )}
+      <span className="font-medium">{label}</span>
+    </motion.button>
   );
 }
 
