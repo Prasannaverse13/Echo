@@ -315,7 +315,13 @@ export function getUserId(): string {
    or /agents to follow what's happening and still come back to the
    composer to see the same goal + plan + dispatched-run card. Without
    this, useState in compose/page.tsx is wiped on unmount and the
-   user lands on a blank input box. */
+   user lands on a blank input box.
+   ---
+   As of the multi-composer refactor, the composer page is a grid of
+   parallel composer slots — each slot has its own goal, plan, and
+   dispatched run, and they all run independently. The grid state is
+   stored under a single key (echo.${userId}.composer.slots) as an
+   array of ComposerDraft entries. */
 
 export interface ComposerDraft {
   phase: "input" | "planning" | "review" | "running" | "completed";
@@ -333,6 +339,23 @@ export interface ComposerDraft {
   savedAt: string;
 }
 
+/** A single slot in the multi-composer grid. Mirrors ComposerDraft
+ *  but adds a stable `id` for React keys and slot identity. */
+export interface ComposerSlot extends ComposerDraft {
+  id: string;
+  /** Optional friendly label, e.g. "Lead enrichment" — purely
+   *  cosmetic, helps users remember what each slot is doing. */
+  label?: string;
+}
+
+export interface ComposerState {
+  /** All slots, in the order the user arranged them. */
+  slots: ComposerSlot[];
+  /** Which slot WebMCP / keyboard shortcuts should target. */
+  activeSlotId: string | null;
+  savedAt: string;
+}
+
 export interface PlanShape {
   subtasks: Array<{
     num: number;
@@ -346,25 +369,87 @@ export interface PlanShape {
   reasoning: string;
 }
 
-const COMPOSER_KEY = "composer";
+const COMPOSER_KEY = "composer.slots";
+const LEGACY_COMPOSER_KEY = "composer";
+const DEFAULT_SLOT_COUNT = 4;
 
-export function loadComposerDraft(userId: string): ComposerDraft | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(NS(userId, COMPOSER_KEY));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
-    return parsed as ComposerDraft;
-  } catch {
-    return null;
-  }
+function freshSlot(label?: string): ComposerSlot {
+  return {
+    id: `slot_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    phase: "input",
+    goal: "",
+    plan: null,
+    agentId: null,
+    runId: null,
+    error: null,
+    dispatching: false,
+    dispatchMessage: null,
+    dispatchGcp: null,
+    savedAt: new Date().toISOString(),
+    label,
+  };
 }
 
-export function saveComposerDraft(userId: string, draft: ComposerDraft) {
+function defaultState(): ComposerState {
+  const slots = Array.from({ length: DEFAULT_SLOT_COUNT }, () => freshSlot());
+  return {
+    slots,
+    activeSlotId: slots[0]?.id ?? null,
+    savedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Load the multi-composer grid state. Migrates a legacy single
+ * ComposerDraft (echo.${userId}.composer) into slot 0 if it exists,
+ * then deletes the legacy key so we never re-migrate. Falls back
+ * to a default 4-slot grid if nothing is persisted.
+ */
+export function loadComposerState(userId: string): ComposerState {
+  if (typeof window === "undefined") return defaultState();
+  // Try the new key first
+  try {
+    const raw = window.localStorage.getItem(NS(userId, COMPOSER_KEY));
+    if (raw) {
+      const parsed = JSON.parse(raw) as ComposerState;
+      if (parsed && Array.isArray(parsed.slots) && parsed.slots.length > 0) {
+        // Make sure every slot has an id (handles older snapshots
+        // that predate the multi-composer refactor)
+        parsed.slots = parsed.slots.map((s) =>
+          s.id ? s : { ...s, id: freshSlot().id }
+        );
+        return parsed;
+      }
+    }
+  } catch {
+    /* fall through to migration */
+  }
+  // Migrate legacy single-slot data into slot 0
+  try {
+    const legacy = window.localStorage.getItem(NS(userId, LEGACY_COMPOSER_KEY));
+    if (legacy) {
+      const parsed = JSON.parse(legacy) as Partial<ComposerSlot>;
+      const slots = Array.from({ length: DEFAULT_SLOT_COUNT }, () => freshSlot());
+      slots[0] = { ...freshSlot(), ...parsed, id: slots[0].id };
+      window.localStorage.removeItem(NS(userId, LEGACY_COMPOSER_KEY));
+      const state: ComposerState = {
+        slots,
+        activeSlotId: slots[0].id,
+        savedAt: new Date().toISOString(),
+      };
+      saveComposerState(userId, state);
+      return state;
+    }
+  } catch {
+    /* fall through */
+  }
+  return defaultState();
+}
+
+export function saveComposerState(userId: string, state: ComposerState) {
   if (typeof window === "undefined") return;
   try {
-    const toSave: ComposerDraft = { ...draft, savedAt: new Date().toISOString() };
+    const toSave: ComposerState = { ...state, savedAt: new Date().toISOString() };
     window.localStorage.setItem(NS(userId, COMPOSER_KEY), JSON.stringify(toSave));
     window.dispatchEvent(new CustomEvent(`echo:store:${COMPOSER_KEY}`, { detail: toSave }));
   } catch {
@@ -372,11 +457,102 @@ export function saveComposerDraft(userId: string, draft: ComposerDraft) {
   }
 }
 
+export function addComposerSlot(
+  userId: string,
+  state: ComposerState,
+  label?: string
+): { state: ComposerState; slot: ComposerSlot } {
+  const slot = freshSlot(label);
+  const next: ComposerState = {
+    ...state,
+    slots: [...state.slots, slot],
+    activeSlotId: slot.id,
+  };
+  saveComposerState(userId, next);
+  return { state: next, slot };
+}
+
+export function removeComposerSlot(
+  userId: string,
+  state: ComposerState,
+  slotId: string
+): ComposerState {
+  if (state.slots.length <= 1) return state; // never empty
+  const next: ComposerState = {
+    ...state,
+    slots: state.slots.filter((s) => s.id !== slotId),
+    activeSlotId:
+      state.activeSlotId === slotId
+        ? state.slots.find((s) => s.id !== slotId)?.id ?? null
+        : state.activeSlotId,
+  };
+  saveComposerState(userId, next);
+  return next;
+}
+
+export function updateComposerSlot(
+  userId: string,
+  state: ComposerState,
+  slotId: string,
+  patch: Partial<ComposerSlot>
+): ComposerState {
+  const next: ComposerState = {
+    ...state,
+    slots: state.slots.map((s) =>
+      s.id === slotId ? { ...s, ...patch, savedAt: new Date().toISOString() } : s
+    ),
+  };
+  saveComposerState(userId, next);
+  return next;
+}
+
+export function setActiveSlot(state: ComposerState, slotId: string): ComposerState {
+  return { ...state, activeSlotId: slotId };
+}
+
+/** Stop the simulator + browser-runner for a runId. Used when a
+ *  slot is closed mid-run so the background tickers don't keep
+ *  writing to a run record nobody is looking at. */
+export function cancelSlotRun(userId: string, slot: ComposerSlot) {
+  if (typeof window === "undefined") return;
+  if (!slot.runId) return;
+  // Lazy-import the run-simulator to avoid a circular dep at module
+  // load. Both modules are client-only.
+  void import("./run-simulator")
+    .then(({ stopRunSimulator }) => stopRunSimulator(slot.runId!))
+    .catch(() => undefined);
+  // Mark the run as cancelled in the store so /runs reflects it.
+  try {
+    const raw = window.localStorage.getItem(NS(userId, RUNS_KEY));
+    if (raw) {
+      const all = JSON.parse(raw) as Array<{ id: string; status: string }>;
+      const next = all.map((r) =>
+        r.id === slot.runId && r.status !== "completed" && r.status !== "failed"
+          ? { ...r, status: "cancelled" as const }
+          : r
+      );
+      window.localStorage.setItem(NS(userId, RUNS_KEY), JSON.stringify(next));
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Legacy single-composer helpers (kept for migration only)             */
+/* ------------------------------------------------------------------ */
+export function loadComposerDraft(userId: string): ComposerDraft | null {
+  return null;
+}
+
+export function saveComposerDraft(userId: string, _draft: ComposerDraft) {
+  /* no-op — use loadComposerState / saveComposerState instead */
+}
+
 export function clearComposerDraft(userId: string) {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.removeItem(NS(userId, COMPOSER_KEY));
-    window.dispatchEvent(new CustomEvent(`echo:store:${COMPOSER_KEY}`, { detail: null }));
+    window.localStorage.removeItem(NS(userId, LEGACY_COMPOSER_KEY));
   } catch {
     /* ignore */
   }
