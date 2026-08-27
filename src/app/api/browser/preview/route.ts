@@ -43,11 +43,13 @@ const IDLE_TIMEOUT_MS = 60_000;
 async function getDeps(): Promise<{
   chromium: ChromiumModule;
   playwright: typeof import("playwright-core").chromium;
-} | null> {
+} | { error: string }> {
   if (g.__echo_chromium && g.__echo_playwright) {
     return { chromium: g.__echo_chromium, playwright: g.__echo_playwright };
   }
-  if (g.__echo_import_attempted) return null;
+  if (g.__echo_import_attempted && g.__echo_chromium && g.__echo_playwright) {
+    return { chromium: g.__echo_chromium, playwright: g.__echo_playwright };
+  }
   g.__echo_import_attempted = true;
   try {
     const [chromiumMod, playwrightMod] = await Promise.all([
@@ -63,28 +65,34 @@ async function getDeps(): Promise<{
       (chromiumMod as ChromiumModule);
     const playwright = (playwrightMod as { chromium?: typeof import("playwright-core").chromium })
       .chromium;
-    if (!chromium || !playwright) return null;
+    if (!chromium || !playwright) {
+      return { error: "deps loaded but missing chromium or playwright export" };
+    }
     g.__echo_chromium = chromium;
     g.__echo_playwright = playwright;
     return { chromium, playwright };
   } catch (err) {
-    console.error("[browser] failed to load deps:", err);
-    return null;
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[browser] failed to load deps:", msg);
+    return { error: `deps import failed: ${msg}` };
   }
 }
 
-async function getBrowser(): Promise<BrowserHandle["browser"] | null> {
+async function getBrowser(): Promise<
+  BrowserHandle["browser"] | { error: string }
+> {
   if (g.__echo_browser && Date.now() - g.__echo_browser.lastUsed < IDLE_TIMEOUT_MS) {
     g.__echo_browser.lastUsed = Date.now();
     return g.__echo_browser.browser;
   }
-  const deps = await getDeps();
-  if (!deps) return null;
+  const depsResult = await getDeps();
+  if ("error" in depsResult) return { error: depsResult.error };
+  const { chromium, playwright } = depsResult;
   try {
-    const execPath = await deps.chromium.executablePath();
+    const execPath = await chromium.executablePath();
     console.log("[browser] launching chromium at", execPath);
-    const browser = await deps.playwright.launch({
-      args: [...deps.chromium.args, "--disable-dev-shm-usage"],
+    const browser = await playwright.launch({
+      args: [...chromium.args, "--disable-dev-shm-usage"],
       executablePath: execPath,
       headless: true,
     });
@@ -92,8 +100,9 @@ async function getBrowser(): Promise<BrowserHandle["browser"] | null> {
     g.__echo_browser = { browser, lastUsed: Date.now() };
     return browser;
   } catch (err) {
-    console.error("[browser] chromium launch failed:", err);
-    return null;
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[browser] chromium launch failed:", msg);
+    return { error: `launch failed: ${msg}` };
   }
 }
 
@@ -110,16 +119,16 @@ export async function POST(req: NextRequest) {
 
   let context: import("playwright-core").BrowserContext | undefined;
   try {
-    const browser = await getBrowser();
-    if (!browser) {
+    const browserResult = await getBrowser();
+    if (typeof browserResult === "object" && browserResult !== null && "error" in browserResult) {
       return NextResponse.json({
         ok: false,
         url: target,
-        error:
-          "Real headless browser unavailable on this server (chromium failed to load or launch). The simulator is filling in this step.",
+        error: `Real headless browser unavailable: ${browserResult.error}. The simulator is filling in this step.`,
         elapsedMs: Date.now() - startMs,
       });
     }
+    const browser = browserResult as import("playwright-core").Browser;
     context = await browser.newContext({
       viewport: { width: 1280, height: 720 },
       userAgent:
