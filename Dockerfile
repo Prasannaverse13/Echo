@@ -13,8 +13,9 @@ RUN corepack enable
 # packageManager field) moved `onlyBuiltDependencies` to a new home
 # that conflicts with the format used in pnpm-workspace.yaml. pnpm 9
 # reads the top-level `onlyBuiltDependencies` list and respects the
-# `pnpm.onlyBuiltDependencies` field in package.json.
-RUN npm install -g pnpm@9
+# `pnpm.onlyBuiltDependencies` field in package.json. --force is
+# needed because corepack's shim at /usr/local/bin/pnpm already exists.
+RUN npm install -g pnpm@9 --force
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install --frozen-lockfile
 
