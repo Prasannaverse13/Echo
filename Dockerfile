@@ -9,7 +9,13 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 RUN corepack enable
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# Pin pnpm 9 — pnpm 11 (auto-fetched by corepack from the lockfile's
+# packageManager field) moved `onlyBuiltDependencies` to a new home
+# that conflicts with the format used in pnpm-workspace.yaml. pnpm 9
+# reads the top-level `onlyBuiltDependencies` list and respects the
+# `pnpm.onlyBuiltDependencies` field in package.json.
+RUN npm install -g pnpm@9
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install --frozen-lockfile
 
 # ---------- 2. Build ----------
