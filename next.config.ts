@@ -14,12 +14,22 @@ import type { NextConfig } from "next";
  * if esbuild relocates those files, executablePath() fails because
  * the original path no longer exists. Telling Next.js to leave the
  * package as-is on the server preserves the bin/ directory layout.
+ *
+ * `outputFileTracingIncludes` ensures the .tar.br binaries inside
+ * @sparticuz/chromium/bin are included in the serverless function
+ * bundle. Without this, Vercel's output file tracing only follows
+ * JS imports and would strip the binary payloads.
  */
 const nextConfig: NextConfig = {
   serverExternalPackages: [
     "@sparticuz/chromium",
     "puppeteer-core",
   ],
+  outputFileTracingIncludes: {
+    "/api/browser/preview": [
+      "./node_modules/@sparticuz/chromium/bin/**",
+    ],
+  },
 };
 
 export default nextConfig;
