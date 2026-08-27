@@ -16,6 +16,7 @@ import {
   type RunRecord,
 } from "@/lib/client/stores";
 import { startRunSimulator } from "@/lib/client/run-simulator";
+import { startBrowserRunner } from "@/lib/client/browser-runner";
 import { buildComposerTools } from "@/lib/webmcp/composer-tools";
 import { useWebMCPTools } from "@/lib/webmcp/use-webmcp";
 import { BrowserConsole } from "@/components/BrowserConsole";
@@ -30,6 +31,11 @@ interface DispatchResponse {
   gcp: "connected" | "disabled";
   message: string;
   skill: { suggestedName: string; intent: string; steps: Array<{ num: number; title: string; detail: string; at: string }> };
+  /** Real public URLs the Vercel-side headless browser should visit
+   *  while executing this goal. The client kicks off
+   *  /api/browser/preview for each. Empty array = no real-browser
+   *  work; the simulator handles the action log. */
+  browserStops: Array<{ url: string; site: string; label: string }>;
 }
 
 const exampleGoal =
@@ -246,6 +252,21 @@ export default function ComposePage() {
         totalInputs: ok.inputs ?? 5,
         goal: draft.goal,
       });
+
+      // Fire the *real* headless-browser backend in parallel. The
+      // server handed us back the URLs the agent should visit for
+      // this goal; the runner calls /api/browser/preview for each
+      // and writes real screenshots into the same action log the
+      // simulator populates. The two streams interleave so the user
+      // sees both the simulated clicks and the real browser's
+      // captures.
+      if (ok.browserStops?.length) {
+        startBrowserRunner({
+          userId,
+          runId: ok.runId,
+          stops: ok.browserStops,
+        });
+      }
     } catch (err) {
       update({
         error: err instanceof Error ? err.message : "Failed to dispatch the agent.",

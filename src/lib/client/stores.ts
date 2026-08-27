@@ -25,6 +25,16 @@ export interface BrowserAction {
   label: string;
   /** Optional free-form detail, e.g. what was extracted or typed. */
   detail?: string;
+  /** Optional base64 data URL of a real screenshot taken by the
+   *  headless browser (populated only when the action was performed
+   *  by the real /api/browser/preview route, not the simulator). */
+  screenshot?: string;
+  /** ms it took to perform this action in the real browser (omit for
+   *  simulator-emitted actions). */
+  elapsedMs?: number;
+  /** true when the action was performed by real headless Chromium
+   *  (Vercel-side Playwright). false / undefined = simulated. */
+  real?: boolean;
 }
 
 export interface RunRecord {

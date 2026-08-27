@@ -126,10 +126,52 @@ export function BrowserConsole({
             >
               {kindIcon[last.kind]}
             </span>
-            <div className="min-w-0">
-              <p className="font-medium text-obsidian truncate">{last.label}</p>
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-obsidian truncate flex items-center gap-1.5">
+                {last.label}
+                {last.real && (
+                  <span
+                    className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded-full bg-mist-mint/30 text-[9px] font-bold uppercase tracking-wide text-obsidian/70"
+                    title="This action was performed by a real headless Chromium, not the simulator"
+                  >
+                    real browser
+                  </span>
+                )}
+              </p>
               {last.detail && (
                 <p className="text-caption text-obsidian/60 truncate">{last.detail}</p>
+              )}
+              {last.screenshot && !compact && (
+                <a
+                  href={last.screenshot}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 block"
+                  title="Click to open full-size screenshot"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={last.screenshot}
+                    alt={`Screenshot of ${displayUrl}`}
+                    className="w-full max-w-md rounded-lg hairline shadow-sm hover:shadow-md transition-shadow"
+                  />
+                </a>
+              )}
+              {last.screenshot && compact && (
+                <a
+                  href={last.screenshot}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1.5 block"
+                  title="Click to open full-size screenshot"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={last.screenshot}
+                    alt={`Screenshot of ${displayUrl}`}
+                    className="w-full max-w-xs rounded-md hairline"
+                  />
+                </a>
               )}
             </div>
           </div>

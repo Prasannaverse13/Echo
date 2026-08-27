@@ -166,6 +166,7 @@ export async function POST(req: NextRequest) {
     inputs: inputs.length,
     goal,
     skill,
+    browserStops: extractBrowserStops(goal),
     gcp: isGcpAvailable() ? "connected" : "disabled",
     message: isGcpAvailable()
       ? "Autonomous agent dispatched. The Cloud Run worker will pick it up and drive the headless browser."
@@ -246,4 +247,89 @@ function deriveAgentName(g: string): string {
   const first = g.split(/[.!?\n]/)[0].trim();
   const words = first.split(/\s+/).slice(0, 6).join(" ");
   return words.length > 50 ? words.slice(0, 47) + "..." : words || "Autonomous agent";
+}
+
+/**
+ * Extracts a list of real public URLs the headless browser should
+ * navigate to in order to "perform" the goal. Mirrors the keyword
+ * dictionary in `buildActionPlan` so the dispatch endpoint and the
+ * client-side simulator agree on which sites the agent visits.
+ *
+ * Returns an empty array when no keywords match — the client-side
+ * browser-runner is a no-op in that case and the simulator drives
+ * the action log on its own.
+ */
+function extractBrowserStops(goal: string): Array<{
+  url: string;
+  site: string;
+  label: string;
+}> {
+  const lower = goal.toLowerCase();
+  const stops: Array<{ url: string; site: string; label: string }> = [];
+
+  if (/(hubspot|\blead)/.test(lower)) {
+    stops.push({
+      url: "https://app.hubspot.com",
+      site: "HubSpot",
+      label: "Open HubSpot and pull this week's new leads",
+    });
+  }
+  if (/(linkedin|\benrich)/.test(lower)) {
+    stops.push({
+      url: "https://www.linkedin.com",
+      site: "LinkedIn",
+      label: "Enrich each lead with job title + current company",
+    });
+  }
+  if (/(gmail|\bemail|\boutreach|\bdraft)/.test(lower)) {
+    stops.push({
+      url: "https://mail.google.com",
+      site: "Gmail",
+      label: "Open Gmail and prepare a draft for each lead",
+    });
+  }
+  if (/(slack|\bnotify|\balert)/.test(lower)) {
+    stops.push({
+      url: "https://app.slack.com",
+      site: "Slack",
+      label: "Post a summary to #sales on Slack",
+    });
+  }
+  if (/(stripe|\bpayment|\bbilling|\bsubscription)/.test(lower)) {
+    stops.push({
+      url: "https://dashboard.stripe.com",
+      site: "Stripe",
+      label: "Open Stripe dashboard and pull usage data",
+    });
+  }
+  if (/(notion|\bdoc|\bwiki|\bpage)/.test(lower)) {
+    stops.push({
+      url: "https://www.notion.so",
+      site: "Notion",
+      label: "Open the target Notion page",
+    });
+  }
+  if (/(sheet|\bgsheet|\bspreadsheet|\bexcel)/.test(lower)) {
+    stops.push({
+      url: "https://docs.google.com/spreadsheets",
+      site: "Google Sheets",
+      label: "Open the destination Google Sheet",
+    });
+  }
+
+  // Generic fallback — visit the home page of whatever service the
+  // user named (or just google.com if nothing was named).
+  if (stops.length === 0) {
+    const urlMatch = goal.match(/https?:\/\/[^\s]+/i);
+    if (urlMatch) {
+      stops.push({ url: urlMatch[0], site: "Target", label: "Open the target URL" });
+    } else {
+      stops.push({
+        url: "https://www.google.com",
+        site: "Google",
+        label: "Search for the target service",
+      });
+    }
+  }
+  return stops;
 }
