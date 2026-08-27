@@ -9,9 +9,8 @@ A Taskmaster agent that watches you perform a workflow on screen once, then runs
 ## Try it out
 - **Live site:** https://echo-one-liard.vercel.app
 - **Repo:** https://github.com/Prasannaverse13/Echo
-- **Demo video (download mirror):** https://echo-one-liard.vercel.app/demo.mp4
+- **Demo video:** *(uploaded to YouTube separately; paste the URL here when submitting)*
 - **Architecture diagram:** https://github.com/Prasannaverse13/Echo/blob/main/docs/architecture.png
-- **YouTube link (final):** *(fill in after YouTube upload — see "Demo video" section below)*
 
 ---
 
@@ -158,15 +157,4 @@ Echo's agent (`src/lib/agents/echo-agent.ts`) follows the **ADK `LlmAgent` patte
 - The architecture diagram (`docs/architecture.png`) shows what is deployed, including the worker that the Cloud Build trigger will roll out automatically once a repo-link UI bug is bypassed
 - All 4 API routes are tested against live GCP traffic, not mocks
 - **Google sign-in is real** — the Continue with Google button on `/login` and `/signup` opens Google's full consent screen (not a small One-Tap card), exchanges the auth code server-side with a freshly-rotated client secret, and signs the user in. Try it on the live site.
-
-## Demo video
-
-The 3:36 demo video (`echo-demo.mp4`, 1.77 MB, 1280×720, H.264) is committed to the repo at `demo-out/echo-demo.mp4` and mirrored at https://echo-one-liard.vercel.app/demo.mp4.
-
-To publish on Devpost, upload the file to YouTube as **Unlisted** and paste the URL above. Suggested title/description:
-
-- **Title:** "Echo — Show it once. Run it forever. (All Things Agentic Hackathon)"
-- **Description:** "Live demo of Echo, a Taskmaster agent that watches you perform a workflow on screen once and then runs it autonomously against thousands of inputs in parallel on Google Cloud. Built in 7 days for the All Things Agentic Hackathon. Live site: https://echo-one-liard.vercel.app · Repo: https://github.com/Prasannaverse13/Echo"
-- **Tags:** `ai-agents`, `google-cloud`, `gemini`, `taskmaster`, `hackathon`, `agentic-ai`, `nextjs`
-
-You can upload from https://studio.youtube.com/ → Create → Upload videos → Select file → Set visibility to "Unlisted" → Publish.
+- **Demo video** is uploaded to YouTube separately and linked above.

@@ -104,7 +104,7 @@ client                              Next.js route                Google Cloud
 | **≥ 1 Google Cloud infra service** | **4 wired**: Cloud Firestore (`skills`/`agents`/`runs`), Cloud Pub/Sub (`echo-runs`), Vertex AI (ADK agent + fallback), Cloud Run (multi-stage Dockerfile + `cloudbuild.yaml`). |
 | **Working webapp** | Next.js 16 (App Router) + React 19 + Tailwind v4 — 17 pages, real screen capture, 4 real API routes, all 200 OK. |
 | **Architecture diagram** | Mermaid in this README (section 2) + `docs/architecture.md`. |
-| **4-min demo video** | Filmed against the live Vercel deploy at `echo-one-liard.vercel.app`. |
+| **Demo video** | Uploaded separately to YouTube (see Devpost submission). |
 | **Public repo with spin-up instructions** | Sections 4 + 5 below. |
 
 ---
