@@ -119,16 +119,12 @@ export const EchoHero = () => {
   return (
     <section className="h-screen w-full">
       <div className="relative h-full w-full overflow-hidden rounded-2xl md:rounded-[2rem] bg-deep-teal">
-        {/* Background video — desktop / large screens */}
-        <video
-          autoPlay
-          loop
-          muted
-          playsInline
-          preload="auto"
-          className="absolute inset-0 h-full w-full object-cover z-0"
-          src="/echo-hero-clean.mp4"
-        />
+        {/* Background video — desktop / large screens. The video
+            file used to be committed to public/echo-hero-clean.mp4
+            (~16 MB) but was removed from the repo; the solid-color
+            fallback below is what renders now. Add a video tag here
+            once you have a hero clip you actually want. */}
+
 
         {/* Gradient ONLY at the bottom for headline contrast — top is fully transparent so the video shines */}
         <div
