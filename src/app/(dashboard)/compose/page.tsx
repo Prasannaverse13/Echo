@@ -222,7 +222,10 @@ export default function ComposePage() {
               Active: Composer {activeIndex + 1}
             </FeatureTag>
           )}
-          <Button variant="outline-dark" size="sm" onClick={handleFillAll}>
+          <Button variant="outline-light" size="sm" onClick={handleAdd}>
+            + Add
+          </Button>
+          <Button variant="outline-light" size="sm" onClick={handleFillAll}>
             ✦ Sample all
           </Button>
         </div>
@@ -249,10 +252,15 @@ export default function ComposePage() {
 
       {/* Add composer button */}
       <div className="mt-4 flex items-center gap-3">
-        <Button variant="outline-dark" size="md" onClick={handleAdd}>
+        <Button variant="outline-light" size="md" onClick={handleAdd}>
           + Add composer
         </Button>
-        {state.slots.length === 4 && (
+        {state.slots.length === 1 && (
+          <span className="text-caption text-obsidian/60">
+            You closed the others — click + Add to bring more back.
+          </span>
+        )}
+        {state.slots.length > 1 && state.slots.length < 4 && (
           <span className="text-caption text-obsidian/50">
             Default grid is 4. Add as many as you need.
           </span>
