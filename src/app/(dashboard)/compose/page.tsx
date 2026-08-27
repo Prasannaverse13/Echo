@@ -12,7 +12,16 @@ import {
   type TriggerRecord,
 } from "@/lib/client/stores";
 
-type Phase = "input" | "planning" | "review" | "scheduled" | "running" | "completed";
+type Phase = "input" | "planning" | "review" | "schedule" | "scheduled" | "running" | "completed";
+
+const CRON_PRESETS: Array<{ label: string; cron: string }> = [
+  { label: "Every Monday 9am",     cron: "0 9 * * 1" },
+  { label: "Every weekday 8am",    cron: "0 8 * * 1-5" },
+  { label: "Every Friday 5pm",     cron: "0 17 * * 5" },
+  { label: "Every Sunday midnight", cron: "0 0 * * 0" },
+  { label: "Every 15 min",         cron: "*/15 * * * *" },
+  { label: "Every hour",           cron: "0 * * * *" },
+];
 
 interface SubTask {
   num: number;
@@ -38,6 +47,15 @@ export default function ComposePage() {
   const [agentId, setAgentId] = React.useState<string | null>(null);
   const [runId, setRunId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [scheduleCron, setScheduleCron] = React.useState<string>(CRON_PRESETS[0].cron);
+  const [schedulePreset, setSchedulePreset] = React.useState<string>(CRON_PRESETS[0].label);
+  const [scheduleName, setScheduleName] = React.useState<string>("");
+  const [scheduleSubmitting, setScheduleSubmitting] = React.useState<boolean>(false);
+  const [scheduledInfo, setScheduledInfo] = React.useState<{
+    id: string;
+    cron: string;
+    nextRunAt: string;
+  } | null>(null);
 
   const startPlanning = async () => {
     setError(null);
@@ -256,12 +274,71 @@ export default function ComposePage() {
           <FeatureCard surface="deep-teal" padding="lg" className="text-paper-white">
             <h3 className="text-heading-sm font-bold mb-3">Schedule this agent</h3>
             <p className="text-body-sm text-paper-white/70 mb-4">
-              Runs on a schedule you pick, automatically. You get a Slack ping
-              when it's done.
+              Runs on a cron schedule you pick, automatically, in the background.
+              The agent opens a real headless browser, runs the recorded skills
+              on each scheduled input, and writes results to Firestore.
             </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+              <div>
+                <label className="text-caption uppercase opacity-60 block mb-1">
+                  Name
+                </label>
+                <input
+                  value={scheduleName}
+                  onChange={(e) => setScheduleName(e.target.value)}
+                  placeholder="Weekly lead enrichment"
+                  className="w-full px-3 py-2 rounded-lg bg-paper-white/10 border border-paper-white/20 text-paper-white text-body-sm placeholder:text-paper-white/40 focus:outline-none focus:border-paper-white/60"
+                />
+              </div>
+              <div>
+                <label className="text-caption uppercase opacity-60 block mb-1">
+                  Schedule
+                </label>
+                <select
+                  value={schedulePreset}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setSchedulePreset(v);
+                    const p = CRON_PRESETS.find((x) => x.label === v);
+                    if (p) setScheduleCron(p.cron);
+                  }}
+                  className="w-full px-3 py-2 rounded-lg bg-paper-white/10 border border-paper-white/20 text-paper-white text-body-sm focus:outline-none focus:border-paper-white/60"
+                >
+                  {CRON_PRESETS.map((p) => (
+                    <option key={p.label} value={p.label} className="text-obsidian">
+                      {p.label} — {p.cron}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-caption uppercase opacity-60 block mb-1">
+                  Cron expression
+                </label>
+                <input
+                  value={scheduleCron}
+                  onChange={(e) => {
+                    setScheduleCron(e.target.value);
+                    const p = CRON_PRESETS.find((x) => x.cron === e.target.value);
+                    if (p) setSchedulePreset(p.label);
+                    else setSchedulePreset("Custom");
+                  }}
+                  placeholder="0 9 * * 1"
+                  className="w-full px-3 py-2 rounded-lg bg-paper-white/10 border border-paper-white/20 text-paper-white text-body-sm font-mono placeholder:text-paper-white/40 focus:outline-none focus:border-paper-white/60"
+                />
+                <p className="text-caption text-paper-white/50 mt-1">
+                  Five fields: minute, hour, day-of-month, month, day-of-week. Use * for any. Examples above.
+                </p>
+              </div>
+            </div>
             <div className="flex flex-wrap gap-3">
-              <Button variant="dark" size="md" onClick={() => doSchedule()}>
-                ✓ Schedule
+              <Button
+                variant="dark"
+                size="md"
+                onClick={() => doSchedule()}
+                disabled={scheduleSubmitting}
+              >
+                {scheduleSubmitting ? "⟳ Scheduling…" : "✓ Schedule background agent"}
               </Button>
               <Button variant="outline-dark" size="md" onClick={() => doRunNow()}>
                 ▶ Run once now
@@ -272,18 +349,34 @@ export default function ComposePage() {
             </div>
           </FeatureCard>
 
-          {phase === "scheduled" && (
+          {phase === "scheduled" && scheduledInfo && (
             <FeatureCard surface="mist-mint" padding="lg">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 mb-3">
                 <span className="text-3xl">✓</span>
-                <div>
-                  <h3 className="text-heading-sm font-bold">Agent scheduled</h3>
+                <div className="flex-1">
+                  <h3 className="text-heading-sm font-bold">Background agent scheduled</h3>
                   <p className="text-body-sm opacity-70 mt-1">
-                    Saved to your workspace. Visit{" "}
-                    <a className="underline" href="/triggers">Triggers</a> to set the cron, or{" "}
-                    <a className="underline" href="/agents">Agents</a> to see all your composed agents.
+                    Echo will fire this agent automatically. Vercel Cron ticks
+                    every hour; the Cloud Run worker picks up the queued run
+                    and drives the browser.
                   </p>
                 </div>
+              </div>
+              <dl className="grid grid-cols-2 gap-y-2 gap-x-6 text-caption">
+                <dt className="opacity-60">Schedule</dt>
+                <dd className="font-mono">{scheduledInfo.cron}</dd>
+                <dt className="opacity-60">Next run</dt>
+                <dd>{new Date(scheduledInfo.nextRunAt).toLocaleString()}</dd>
+                <dt className="opacity-60">Schedule id</dt>
+                <dd className="font-mono">{scheduledInfo.id}</dd>
+              </dl>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <a className="text-caption underline-offset-4 hover:underline" href="/triggers">
+                  View all triggers →
+                </a>
+                <a className="text-caption underline-offset-4 hover:underline" href="/agents">
+                  View agents →
+                </a>
               </div>
             </FeatureCard>
           )}
@@ -351,22 +444,77 @@ export default function ComposePage() {
   }
 
   function doSchedule() {
-    persistAgent("active").then((agent) => {
-      const trigger: TriggerRecord = {
-        id: `trg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        name: `Run ${agent.name}`,
-        type: "Schedule",
-        skillId: agent.id,
-        skillName: agent.name,
-        status: "active",
-        schedule: "Every Monday 9am",
-        lastFired: "—",
-        createdAt: new Date().toISOString(),
-      };
-      saveTrigger(userId, trigger);
-      appendLog(userId, { level: "success", agent: "echo-manager", msg: `Agent scheduled: ${agent.name}` });
-      setPhase("scheduled");
-    });
+    setError(null);
+    setScheduleSubmitting(true);
+    persistAgent("active")
+      .then(async (agent) => {
+        // Persist a local trigger mirror so the /triggers page shows it
+        // even when GCP / Vercel Cron is unavailable
+        const trigger: TriggerRecord = {
+          id: `trg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          name: scheduleName.trim() || `Run ${agent.name}`,
+          type: "Schedule",
+          skillId: agent.id,
+          skillName: agent.name,
+          status: "active",
+          schedule: scheduleCron,
+          lastFired: "—",
+          createdAt: new Date().toISOString(),
+        };
+        saveTrigger(userId, trigger);
+
+        // Hit the real scheduling API. If GCP is configured the
+        // schedule persists in Firestore and Vercel Cron will tick
+        // it hourly. If not, we just keep the local mirror so the
+        // /triggers page still shows it.
+        const res = await fetch("/api/agents/schedule", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: trigger.name,
+            goal: agent.goal,
+            cron: scheduleCron,
+            skillLibrary: agent.subtasks.map((s) => ({
+              id: s.matchedSkill,
+              name: s.matchedSkill,
+              description: s.title,
+            })),
+            enabled: true,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok && data?.schedule) {
+          setScheduledInfo({
+            id: data.schedule.id,
+            cron: data.schedule.cron,
+            nextRunAt: data.schedule.nextRunAt,
+          });
+          appendLog(userId, {
+            level: "success",
+            agent: "echo-manager",
+            msg: `Background agent scheduled: ${trigger.name} (${data.schedule.cron})`,
+          });
+          setPhase("scheduled");
+        } else {
+          // Demo / no-GCP fallback — show the local trigger and proceed
+          setScheduledInfo({
+            id: trigger.id,
+            cron: scheduleCron,
+            nextRunAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          });
+          appendLog(userId, {
+            level: "info",
+            agent: "echo-manager",
+            msg: `Schedule saved locally (GCP not connected): ${trigger.name}`,
+          });
+          setPhase("scheduled");
+        }
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Failed to schedule");
+        setPhase("review");
+      })
+      .finally(() => setScheduleSubmitting(false));
   }
 
   function doRunNow() {

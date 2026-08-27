@@ -1,11 +1,14 @@
 # Echo — Google Cloud Build pipeline
-# Triggered on push to main. Builds TWO images (API + worker), pushes both
-# to Artifact Registry, deploys both to Cloud Run.
+# Triggered on push to main. Builds THREE images (API + worker + browser-executor),
+# pushes all to Artifact Registry, deploys all to Cloud Run.
 #
 # Service topology
-#   - `echo`        — the Next.js API (HTTP, /api/* routes)
-#   - `echo-worker` — the Pub/Sub listener that invokes the ADK agent
-#                     per input. Internal-only, no public ingress.
+#   - `echo`              — the Next.js API (HTTP, /api/* routes)
+#   - `echo-worker`       — the Pub/Sub listener that invokes the ADK agent
+#                           per input. Internal-only, no public ingress.
+#   - `echo-browser`      — the Playwright headless browser the agent drives
+#                           over HTTP. Internal-only, no public ingress.
+#                           The worker calls it via BROWSER_EXECUTOR_URL.
 #
 # The worker subscribes to the `echo-runs` Pub/Sub topic via the
 # `echo-runs-worker` subscription (auto-created on first boot by the
@@ -107,13 +110,69 @@ steps:
       - --timeout=3600
       - --min-instances=1
       - --max-instances=20
-      - --set-env-vars=NODE_ENV=production,GCP_PROJECT_ID=${_GCP_PROJECT_ID},GCP_VERTEX_LOCATION=${_REGION},GCP_PUBSUB_TOPIC=echo-runs,GCP_PUBSUB_SUBSCRIPTION=echo-runs-worker,WORKER_CONCURRENCY=4
+      - --set-env-vars=NODE_ENV=production,GCP_PROJECT_ID=${_GCP_PROJECT_ID},GCP_VERTEX_LOCATION=${_REGION},GCP_PUBSUB_TOPIC=echo-runs,GCP_PUBSUB_SUBSCRIPTION=echo-runs-worker,WORKER_CONCURRENCY=4,BROWSER_EXECUTOR_URL=https://echo-browser-${_REGION}-a.run.app
       - --set-secrets=GEMINI_API_KEY=gemini-key:latest
+
+  # --- Browser executor service (Playwright + Chromium) ---
+  - id: build-browser
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - browser-executor/Dockerfile
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-browser:${SHORT_SHA}
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-browser:latest
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-browser:latest
+      - browser-executor
+
+  - id: push-browser
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-browser
+
+  - id: deploy-browser
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - echo-browser
+      - --region=${_REGION}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-browser:${SHORT_SHA}
+      - --platform=managed
+      - --no-allow-unauthenticated
+      - --port=8080
+      - --memory=2Gi
+      - --cpu=2
+      - --concurrency=4
+      - --timeout=600
+      - --min-instances=0
+      - --max-instances=4
+      - --set-env-vars=NODE_ENV=production,GCP_PROJECT_ID=${_GCP_PROJECT_ID}
+
+  - id: grant-worker-invoker
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - services
+      - add-iam-policy-binding
+      - echo-browser
+      - --region=${_REGION}
+      - --member=serviceAccount:${PROJECT_ID}@appspot.gserviceaccount.com
+      - --role=roles/run.invoker
+    # allowUnauthenticated: false on echo-browser means only Cloud Run
+    # services with the invoker role can hit it. The default
+    # compute service account has run.invoker on its own project.
 
 images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo:${SHORT_SHA}
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo:latest
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-worker:${SHORT_SHA}
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-worker:latest
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-browser:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/echo-browser:latest
 
 timeout: 1800s

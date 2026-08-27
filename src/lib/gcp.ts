@@ -177,3 +177,51 @@ export async function writeDoc(
     return null;
   }
 }
+
+/**
+ * Read every document in a Firestore collection. Returns an array
+ * of plain objects (the document data only — no id). Returns [] on
+ * any failure so callers can `await` it without try/catch.
+ */
+export async function readCollection(
+  collection: string,
+  opts: { limit?: number; orderBy?: { field: string; direction?: "asc" | "desc" } } = {}
+): Promise<Record<string, unknown>[]> {
+  if (IS_VERCEL) return [];
+  if (!isGcpAvailable()) return [];
+  try {
+    const db = getFirestore();
+    let q: FirebaseFirestore.Query = db.collection(collection);
+    if (opts.orderBy) {
+      q = q.orderBy(opts.orderBy.field, opts.orderBy.direction ?? "asc");
+    }
+    if (typeof opts.limit === "number") {
+      q = q.limit(opts.limit);
+    }
+    const snap = await q.get();
+    return snap.docs.map((d) => d.data() as Record<string, unknown>);
+  } catch (err) {
+    console.warn(`[gcp] firestore read of ${collection} failed (non-fatal):`, (err as Error).message);
+    return [];
+  }
+}
+
+/**
+ * Delete a Firestore document by id. Failures are logged but never
+ * thrown.
+ */
+export async function deleteDoc(
+  collection: string,
+  id: string
+): Promise<boolean> {
+  if (IS_VERCEL) return false;
+  if (!isGcpAvailable()) return false;
+  try {
+    const db = getFirestore();
+    await db.collection(collection).doc(id).delete();
+    return true;
+  } catch (err) {
+    console.warn(`[gcp] firestore delete from ${collection}/${id} failed (non-fatal):`, (err as Error).message);
+    return false;
+  }
+}
