@@ -59,10 +59,11 @@ async function getChromium(): Promise<ChromiumModule | null> {
   if (g.__echo_import_attempted) return null;
   g.__echo_import_attempted = true;
   try {
-    // @ts-expect-error - ESM-only package, default import path varies
-    const mod = await import("@sparticuz/chromium");
+    const mod = (await import("@sparticuz/chromium")) as unknown as
+      | ChromiumModule
+      | { default?: ChromiumModule };
     const chromium: ChromiumModule =
-      (mod as { default?: ChromiumModule }).default ?? (mod as unknown as ChromiumModule);
+      (mod as { default?: ChromiumModule }).default ?? (mod as ChromiumModule);
     g.__echo_chromium = chromium;
     return chromium;
   } catch (err) {
