@@ -1,8 +1,5 @@
-packages:
-  - "."
-pnpm:
-  onlyBuiltDependencies:
-    - unrs-resolver
-    - "@google/genai"
-    - esbuild
-    - protobufjs
+onlyBuiltDependencies:
+  - unrs-resolver
+  - "@google/genai"
+  - esbuild
+  - protobufjs
