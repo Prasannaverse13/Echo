@@ -1,67 +1,174 @@
-import Link from "next/link";
-import { notFound } from "next/navigation";
-import { Button, FeatureTag, FeatureCard } from "@/components/ui";
+"use client";
 
-const agentData: Record<
-  string,
-  {
-    name: string;
-    goal: string;
-    parent: string;
-    spawnedAt: string;
-    progress: number;
-    total: number;
-    eta: string;
-    status: "running" | "completed" | "review";
-    skills: string[];
-    trace: { ts: string; step: string; level: "info" | "success" | "warn" | "action" }[];
-    cost: { label: string; value: string }[];
-  }
-> = {
-  "rfp-responder": {
-    name: "RFP Responder",
-    goal: "Process 1,000 incoming RFPs and draft responses.",
-    parent: "Auto-composed by Skill Manager",
-    spawnedAt: "Aug 21, 09:14",
-    progress: 234,
-    total: 1000,
-    eta: "~14h",
-    status: "running",
-    skills: ["RFP Response Drafting", "Slack Notifier"],
-    trace: [
-      { ts: "11:42:08", step: "Picked up input 'Globex RFI.pdf'", level: "info" },
-      { ts: "11:42:09", step: "Extracted 23 questions from PDF", level: "success" },
-      { ts: "11:42:11", step: "Searching knowledge vault...", level: "info" },
-      { ts: "11:42:14", step: "Found 18 matches (5 high-confidence, 13 medium)", level: "info" },
-      { ts: "11:42:18", step: "Drafting response to Q1: 'Company overview'", level: "action" },
-      { ts: "11:42:19", step: "✓ Drafted (used 'about-us.md', case-study-acme.pdf)", level: "success" },
-      { ts: "11:42:21", step: "Drafting response to Q2: 'SOC 2 compliance'", level: "action" },
-      { ts: "11:42:24", step: "✓ Drafted (used soc2-report.pdf)", level: "success" },
-      { ts: "11:42:26", step: "Drafting response to Q3: 'Pricing for 500 seats'", level: "action" },
-      { ts: "11:42:28", step: "⚠ No high-confidence match. Flagged for human review.", level: "warn" },
-      { ts: "11:42:31", step: "Saved draft to Drive/RFPs/globex-rfi-draft.docx", level: "success" },
-      { ts: "11:42:32", step: "Notified #sales via Slack", level: "info" },
-      { ts: "11:42:33", step: "─── Next input: 'Initech Security Audit.pdf' ───", level: "info" },
-    ],
-    cost: [
-      { label: "Tokens used", value: "1.2M" },
-      { label: "Estimated cost", value: "$0.84" },
-      { label: "Runtime", value: "2h 28m" },
-      { label: "Avg / run", value: "$0.004" },
-    ],
-  },
+/**
+ * Agent detail page.
+ *
+ * Resolves an agent id to its record in two sources, in order:
+ *   1. The local `agents` store (echo.${userId}.agents) — where the
+ *      composer's dispatch flow saves every agent it spawns.
+ *   2. A small hardcoded seed map with a single demo agent
+ *      (`rfp-responder`) so the marketing/demo story still resolves
+ *      to something interesting when the user navigates to /agents
+ *      without first dispatching anything.
+ *
+ * If neither has the id, we render a friendly "not found" card
+ * instead of letting Next.js's global 404 swallow the page. The
+ * previous version called `notFound()` for every real agent id and
+ * resulted in a white screen whenever a user clicked "View agent"
+ * on a /runs detail page.
+ */
+
+import * as React from "react";
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
+import { Button, FeatureTag, FeatureCard } from "@/components/ui";
+import {
+  getAgent,
+  getUserId,
+  listRuns,
+  type AgentRecord,
+  type RunRecord,
+} from "@/lib/client/stores";
+
+const seedAgent = {
+  id: "rfp-responder",
+  name: "RFP Responder",
+  goal: "Process 1,000 incoming RFPs and draft responses.",
+  parent: "Auto-composed by Skill Manager",
+  spawnedAt: "Aug 21, 09:14",
+  progress: 234,
+  total: 1000,
+  eta: "~14h",
+  status: "running" as const,
+  skills: ["RFP Response Drafting", "Slack Notifier"],
+  trace: [
+    { ts: "11:42:08", step: "Picked up input 'Globex RFI.pdf'", level: "info" as const },
+    { ts: "11:42:09", step: "Extracted 23 questions from PDF", level: "success" as const },
+    { ts: "11:42:11", step: "Searching knowledge vault...", level: "info" as const },
+    { ts: "11:42:14", step: "Found 18 matches (5 high-confidence, 13 medium)", level: "info" as const },
+    { ts: "11:42:18", step: "Drafting response to Q1: 'Company overview'", level: "action" as const },
+    { ts: "11:42:19", step: "✓ Drafted (used 'about-us.md', case-study-acme.pdf)", level: "success" as const },
+    { ts: "11:42:21", step: "Drafting response to Q2: 'SOC 2 compliance'", level: "action" as const },
+    { ts: "11:42:24", step: "✓ Drafted (used soc2-report.pdf)", level: "success" as const },
+    { ts: "11:42:26", step: "Drafting response to Q3: 'Pricing for 500 seats'", level: "action" as const },
+    { ts: "11:42:28", step: "⚠ No high-confidence match. Flagged for human review.", level: "warn" as const },
+    { ts: "11:42:31", step: "Saved draft to Drive/RFPs/globex-rfi-draft.docx", level: "success" as const },
+    { ts: "11:42:32", step: "Notified #sales via Slack", level: "info" as const },
+    { ts: "11:42:33", step: "─── Next input: 'Initech Security Audit.pdf' ───", level: "info" as const },
+  ],
+  cost: [
+    { label: "Tokens used", value: "1.2M" },
+    { label: "Estimated cost", value: "$0.84" },
+    { label: "Runtime", value: "2h 28m" },
+    { label: "Avg / run", value: "$0.004" },
+  ],
 };
 
-export default async function AgentDetailPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  const agent = agentData[id];
-  if (!agent) notFound();
+const statusMeta: Record<string, { color: "dusty-sky" | "wisteria" | "desert-clay" | "mist-mint" | "iron"; label: string; symbol: string }> = {
+  running: { color: "desert-clay", label: "Running", symbol: "◉" },
+  completed: { color: "mist-mint", label: "Done", symbol: "✓" },
+  review: { color: "wisteria", label: "Needs you", symbol: "!" },
+  failed: { color: "iron", label: "Failed", symbol: "✕" },
+  paused: { color: "iron", label: "Paused", symbol: "⏸" },
+  planning: { color: "dusty-sky", label: "Planning", symbol: "⟳" },
+  active: { color: "desert-clay", label: "Active", symbol: "◉" },
+  archived: { color: "iron", label: "Archived", symbol: "▣" },
+};
 
-  const pct = Math.round((agent.progress / agent.total) * 100);
+export default function AgentDetailPage() {
+  const params = useParams<{ id: string }>();
+  const router = useRouter();
+  const userId = React.useMemo(getUserId, []);
+  const id = params?.id ?? "";
+
+  const [hydrated, setHydrated] = React.useState(false);
+  const [stored, setStored] = React.useState<AgentRecord | null>(null);
+  const [runs, setRuns] = React.useState<RunRecord[]>([]);
+
+  React.useEffect(() => {
+    setStored(getAgent(userId, id) ?? null);
+    setRuns(listRuns(userId).filter((r) => r.agentId === id));
+    setHydrated(true);
+  }, [userId, id]);
+
+  // After hydration, resolve the agent: stored first, then seed.
+  const seed = !hydrated ? null : id === seedAgent.id ? seedAgent : null;
+  const agent = stored ?? seed;
+
+  if (!hydrated) {
+    return (
+      <div className="page-container py-10">
+        <div className="animate-pulse h-10 w-48 rounded-md bg-iron/30 mb-6" />
+        <div className="animate-pulse h-72 rounded-2xl bg-iron/30" />
+      </div>
+    );
+  }
+
+  if (!agent) {
+    return (
+      <div className="page-container py-10">
+        <Link
+          href="/agents"
+          className="text-caption text-obsidian/60 hover:text-obsidian mb-6 inline-block"
+        >
+          ← Back to agents
+        </Link>
+        <FeatureCard surface="paper-white" padding="lg" className="hairline max-w-2xl">
+          <p className="text-caption font-medium uppercase opacity-60 mb-2">
+            Agent not found
+          </p>
+          <h1 className="text-heading font-bold mb-3">No agent with id “{id}”</h1>
+          <p className="text-body-sm text-obsidian/70 mb-4">
+            This agent isn't in your local store. It may have been created
+            in a different browser or signed-in account, or it never
+            finished saving. Go back to the agents list to see what you
+            have, or compose a new one.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="light" size="sm" onClick={() => router.push("/agents")}>
+              ← All agents
+            </Button>
+            <Button variant="outline-light" size="sm" onClick={() => router.push("/compose")}>
+              ❖ Compose new
+            </Button>
+          </div>
+        </FeatureCard>
+      </div>
+    );
+  }
+
+  // Render paths: stored agent vs seed agent
+  const isStored = !!stored;
+  const storedAgent = stored as AgentRecord | null;
+  const meta =
+    statusMeta[
+      isStored
+        ? storedAgent?.status ?? "active"
+        : (seed as typeof seedAgent).status
+    ];
+  const progressPct = isStored
+    ? Math.min(
+        100,
+        Math.round(
+          (runs.reduce((s, r) => s + (r.progress ?? 0), 0) /
+            Math.max(1, runs.length * 100)) *
+            100
+        )
+      )
+    : Math.round(
+        ((seed as typeof seedAgent).progress / (seed as typeof seedAgent).total) * 100
+      );
+  const name = isStored ? storedAgent?.name ?? "Untitled agent" : (seed as typeof seedAgent).name;
+  const goal = isStored ? storedAgent?.goal ?? "" : (seed as typeof seedAgent).goal;
+  const parent = isStored ? "Auto-composed by Skill Manager" : (seed as typeof seedAgent).parent;
+  const spawnedAt = isStored
+    ? new Date(storedAgent?.createdAt ?? Date.now()).toLocaleString()
+    : (seed as typeof seedAgent).spawnedAt;
+  const skills = isStored
+    ? (storedAgent?.subtasks ?? []).map((s) => s.matchedSkill).filter(Boolean)
+    : (seed as typeof seedAgent).skills;
+  const subtasks = isStored ? storedAgent?.subtasks ?? [] : [];
+  const linkedRuns = runs;
 
   return (
     <div className="page-container py-10">
@@ -74,16 +181,23 @@ export default async function AgentDetailPage({
 
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
         <div>
-          <div className="flex items-center gap-3 mb-3">
-            <FeatureTag variant="desert-clay">◉ Running</FeatureTag>
-            <FeatureTag variant="iron">Sub-agent</FeatureTag>
+          <div className="flex items-center gap-3 mb-3 flex-wrap">
+            <FeatureTag variant={meta.color}>
+              {meta.symbol} {meta.label}
+            </FeatureTag>
+            <FeatureTag variant="iron">
+              {isStored ? "Saved agent" : "Demo seed"}
+            </FeatureTag>
+            {isStored && storedAgent && (
+              <code className="text-caption font-mono text-obsidian/50">
+                {storedAgent.id}
+              </code>
+            )}
           </div>
-          <h1 className="text-display-md font-bold">{agent.name}</h1>
-          <p className="mt-3 text-body text-obsidian/70 max-w-2xl">
-            {agent.goal}
-          </p>
+          <h1 className="text-display-md font-bold">{name}</h1>
+          <p className="mt-3 text-body text-obsidian/70 max-w-2xl">{goal}</p>
           <p className="mt-2 text-caption text-obsidian/50">
-            {agent.parent} · Started {agent.spawnedAt}
+            {parent} · Started {spawnedAt}
           </p>
         </div>
         <div className="flex gap-3">
@@ -97,89 +211,182 @@ export default async function AgentDetailPage({
       </div>
 
       {/* Progress hero */}
-      <FeatureCard surface="deep-teal" padding="lg" className="text-paper-white mb-8">
+      <FeatureCard
+        surface={isStored ? "obsidian" : "deep-teal"}
+        padding="lg"
+        className="text-paper-white mb-8"
+      >
         <div className="flex items-center justify-between mb-3">
           <span className="text-caption text-paper-white/60 uppercase tracking-wider">
-            Progress
+            {isStored
+              ? `Linked runs (${linkedRuns.length})`
+              : "Progress"}
           </span>
           <span className="text-heading font-bold tabular-nums">
-            {agent.progress} / {agent.total}
+            {isStored
+              ? `${linkedRuns.filter((r) => r.status === "completed").length}/${linkedRuns.length} done`
+              : `${(seed as typeof seedAgent).progress} / ${(seed as typeof seedAgent).total}`}
           </span>
         </div>
         <div className="h-2 bg-paper-white/10 rounded-full overflow-hidden mb-4">
           <div
             className="h-full bg-paper-white rounded-full"
-            style={{ width: `${pct}%` }}
+            style={{ width: `${progressPct}%` }}
           />
         </div>
         <div className="flex items-center justify-between text-caption text-paper-white/70">
-          <span>{pct}% complete</span>
-          <span>ETA: {agent.eta}</span>
+          <span>{progressPct}% complete</span>
+          <span>
+            {isStored
+              ? `Last activity: ${
+                  linkedRuns[0]
+                    ? new Date(linkedRuns[0].startedAt).toLocaleString()
+                    : "—"
+                }`
+              : `ETA: ${(seed as typeof seedAgent).eta}`}
+          </span>
         </div>
       </FeatureCard>
 
-      {/* Cost stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
-        {agent.cost.map((c) => (
-          <FeatureCard key={c.label} surface="paper-white" padding="md" className="hairline">
-            <p className="text-caption text-obsidian/50 mb-1">{c.label}</p>
-            <p className="text-heading-sm font-bold tabular-nums">{c.value}</p>
-          </FeatureCard>
-        ))}
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Live trace */}
-        <div className="lg:col-span-2">
-          <h2 className="text-heading-sm font-bold mb-4">Live execution trace</h2>
-          <FeatureCard surface="obsidian" padding="md" className="font-mono text-caption">
-            <div className="space-y-1.5 max-h-[500px] overflow-y-auto">
-              {agent.trace.map((t, i) => {
-                const color =
-                  t.level === "success"
-                    ? "text-emerald-400"
-                    : t.level === "warn"
-                      ? "text-amber-400"
-                      : t.level === "action"
-                        ? "text-sky-300"
-                        : "text-paper-white/60";
-                return (
-                  <div key={i} className="flex gap-3">
-                    <span className="text-paper-white/30 tabular-nums shrink-0">
-                      {t.ts}
-                    </span>
-                    <span className={color}>{t.step}</span>
-                  </div>
-                );
-              })}
-              <div className="flex gap-3 mt-2 text-paper-white/40">
-                <span className="tabular-nums">11:42:34</span>
-                <span className="animate-pulse">▍</span>
+        {/* Sub-tasks OR live trace */}
+        <div className="lg:col-span-2 space-y-6">
+          {isStored && subtasks.length > 0 && (
+            <div>
+              <h2 className="text-heading-sm font-bold mb-4">Sub-tasks</h2>
+              <div className="space-y-2">
+                {subtasks.map((s) => (
+                  <FeatureCard
+                    key={s.num}
+                    surface="paper-white"
+                    padding="md"
+                    className="hairline"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="shrink-0 w-8 h-8 rounded-full bg-obsidian text-paper-white text-caption font-bold flex items-center justify-center">
+                        {s.num}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-body-sm font-medium truncate">
+                          {s.title}
+                        </p>
+                        <p className="text-caption text-obsidian/50">
+                          Uses skill: <em>{s.matchedSkill}</em>
+                          {s.parallel ? " · parallel" : ""} · ~{s.estTime}
+                        </p>
+                      </div>
+                    </div>
+                  </FeatureCard>
+                ))}
               </div>
             </div>
-          </FeatureCard>
+          )}
+
+          {!isStored && (
+            <>
+              <h2 className="text-heading-sm font-bold">Live execution trace</h2>
+              <FeatureCard surface="obsidian" padding="md" className="font-mono text-caption">
+                <div className="space-y-1.5 max-h-[500px] overflow-y-auto">
+                  {(seed as typeof seedAgent).trace.map((t, i) => {
+                    const color =
+                      t.level === "success"
+                        ? "text-emerald-400"
+                        : t.level === "warn"
+                          ? "text-amber-400"
+                          : t.level === "action"
+                            ? "text-sky-300"
+                            : "text-paper-white/60";
+                    return (
+                      <div key={i} className="flex gap-3">
+                        <span className="text-paper-white/30 tabular-nums shrink-0">
+                          {t.ts}
+                        </span>
+                        <span className={color}>{t.step}</span>
+                      </div>
+                    );
+                  })}
+                  <div className="flex gap-3 mt-2 text-paper-white/40">
+                    <span className="tabular-nums">11:42:34</span>
+                    <span className="animate-pulse">▍</span>
+                  </div>
+                </div>
+              </FeatureCard>
+            </>
+          )}
+
+          {/* Linked runs (only for stored agents) */}
+          {isStored && linkedRuns.length > 0 && (
+            <div>
+              <h2 className="text-heading-sm font-bold mb-4">Recent runs</h2>
+              <div className="space-y-2">
+                {linkedRuns.slice(0, 8).map((r) => (
+                  <Link
+                    key={r.id}
+                    href={`/runs/${r.id}`}
+                    className="block"
+                  >
+                    <FeatureCard
+                      surface="paper-white"
+                      padding="md"
+                      className="hairline hover:shadow-sm transition-shadow"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-caption font-mono text-obsidian/60 truncate">
+                            {r.id}
+                          </p>
+                          <p className="text-body-sm text-obsidian/80 truncate">
+                            {r.goal ?? "(no goal)"}
+                          </p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="text-caption text-obsidian/50">
+                            {r.status} · {r.progress}%
+                          </p>
+                          <p className="text-caption text-obsidian/40">
+                            {new Date(r.startedAt).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                    </FeatureCard>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {isStored && linkedRuns.length === 0 && (
+            <FeatureCard surface="paper-white" padding="md" className="hairline">
+              <p className="text-caption text-obsidian/60">
+                No runs have been linked to this agent yet. Dispatch the
+                composer to start one.
+              </p>
+            </FeatureCard>
+          )}
         </div>
 
-        {/* Skills in use */}
+        {/* Right column */}
         <div className="space-y-4">
-          <FeatureCard surface="paper-white" padding="md" className="hairline">
-            <h3 className="text-caption font-medium uppercase opacity-60 mb-3">
-              Skills in use
-            </h3>
-            <ul className="space-y-2">
-              {agent.skills.map((s, i) => (
-                <li
-                  key={s}
-                  className="flex items-center gap-3 text-body-sm"
-                >
-                  <span className="w-6 h-6 rounded-full bg-obsidian text-paper-white flex items-center justify-center text-caption font-bold shrink-0">
-                    {i + 1}
-                  </span>
-                  <span className="font-medium">{s}</span>
-                </li>
-              ))}
-            </ul>
-          </FeatureCard>
+          {skills.length > 0 && (
+            <FeatureCard surface="paper-white" padding="md" className="hairline">
+              <h3 className="text-caption font-medium uppercase opacity-60 mb-3">
+                Skills in use
+              </h3>
+              <ul className="space-y-2">
+                {skills.map((s, i) => (
+                  <li
+                    key={s + i}
+                    className="flex items-center gap-3 text-body-sm"
+                  >
+                    <span className="w-6 h-6 rounded-full bg-obsidian text-paper-white flex items-center justify-center text-caption font-bold shrink-0">
+                      {i + 1}
+                    </span>
+                    <span className="font-medium">{s}</span>
+                  </li>
+                ))}
+              </ul>
+            </FeatureCard>
+          )}
 
           <FeatureCard surface="dusty-sky" padding="md">
             <h3 className="text-caption font-medium uppercase opacity-60 mb-2">

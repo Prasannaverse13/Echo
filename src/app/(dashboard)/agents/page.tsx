@@ -1,12 +1,36 @@
 "use client";
 
+/**
+ * Agents list page.
+ *
+ * Shows both the hardcoded demo seeds (kept for the marketing
+ * screenshots) AND any agents the user has actually saved via the
+ * composer dispatch flow. Saved agents read from
+ * `echo.${userId}.agents` (the same store the composer's dispatch
+ * writes to); seeds are static fallback.
+ */
+
 import * as React from "react";
 import Link from "next/link";
 import { Button, FeatureTag, FeatureCard } from "@/components/ui";
 import { buildAgentsTools } from "@/lib/webmcp/agents-tools";
 import { useWebMCPTools } from "@/lib/webmcp/use-webmcp";
+import { getUserId, listAgents, listRuns, type AgentRecord, type RunRecord } from "@/lib/client/stores";
 
-const agents = [
+interface SeedAgent {
+  id: string;
+  name: string;
+  goal: string;
+  parent: string;
+  skills: string[];
+  progress: number;
+  total: number;
+  status: "running" | "completed" | "review" | "failed";
+  eta: string;
+  spawnedAt: string;
+}
+
+const seedAgents: SeedAgent[] = [
   {
     id: "rfp-responder",
     name: "RFP Responder",
@@ -86,15 +110,91 @@ const statusMeta: Record<string, { color: "dusty-sky" | "wisteria" | "desert-cla
   completed: { color: "mist-mint", label: "Done", symbol: "✓" },
   review: { color: "wisteria", label: "Needs you", symbol: "!" },
   failed: { color: "iron", label: "Failed", symbol: "✕" },
+  paused: { color: "iron", label: "Paused", symbol: "⏸" },
+  planning: { color: "dusty-sky", label: "Planning", symbol: "⟳" },
+  active: { color: "desert-clay", label: "Active", symbol: "◉" },
+  archived: { color: "iron", label: "Archived", symbol: "▣" },
 };
 
+interface UnifiedAgent {
+  id: string;
+  name: string;
+  goal: string;
+  parent: string;
+  skills: string[];
+  progress: number;
+  total: number;
+  status: string;
+  eta: string;
+  spawnedAt: string;
+  isSeed: boolean;
+}
+
+function toUnified(record: AgentRecord, runs: RunRecord[]): UnifiedAgent {
+  const linkedRuns = runs.filter((r) => r.agentId === record.id);
+  const completed = linkedRuns.filter((r) => r.status === "completed").length;
+  const totalInputs = linkedRuns.reduce((s, r) => s + (r.totalInputs ?? 0), 0);
+  const totalDone = linkedRuns.reduce((s, r) => s + Math.floor((r.progress ?? 0) / 100 * (r.totalInputs ?? 0)), 0);
+  return {
+    id: record.id,
+    name: record.name,
+    goal: record.goal,
+    parent: "Auto-composed",
+    skills: record.subtasks?.map((s) => s.matchedSkill).filter(Boolean) ?? [],
+    progress: totalDone,
+    total: Math.max(linkedRuns.length, 1),
+    status: record.status,
+    eta: linkedRuns.length > 0 ? `${linkedRuns.length} run${linkedRuns.length === 1 ? "" : "s"}` : "Not started",
+    spawnedAt: new Date(record.createdAt).toLocaleString(),
+    isSeed: false,
+  };
+}
+
+function toUnifiedSeed(seed: SeedAgent): UnifiedAgent {
+  return { ...seed, isSeed: true };
+}
+
 export default function AgentsPage() {
-  // WebMCP: expose saved-agent query + lifecycle tools. The page
-  // itself still uses static seed data for visual demo; the tools
-  // operate on the live localStorage so an agent can act on whatever
-  // the user actually has saved.
+  const userId = React.useMemo(getUserId, []);
+  const [hydrated, setHydrated] = React.useState(false);
+  const [agents, setAgents] = React.useState<AgentRecord[]>([]);
+  const [runs, setRuns] = React.useState<RunRecord[]>([]);
+
+  React.useEffect(() => {
+    setAgents(listAgents(userId));
+    setRuns(listRuns(userId));
+    setHydrated(true);
+  }, [userId]);
+
   const agentsTools = React.useMemo(() => buildAgentsTools(), []);
   useWebMCPTools(agentsTools);
+
+  // Merge: real agents first (newest first), then seeds that aren't
+  // shadowed by a real agent with the same id.
+  const unified: UnifiedAgent[] = React.useMemo(() => {
+    if (!hydrated) return [];
+    const realIds = new Set(agents.map((a) => a.id));
+    const real: UnifiedAgent[] = agents.map((a) => toUnified(a, runs));
+    const seeds: UnifiedAgent[] = seedAgents
+      .filter((s) => !realIds.has(s.id))
+      .map(toUnifiedSeed);
+    return [...real, ...seeds];
+  }, [hydrated, agents, runs]);
+
+  // Live summary: count from real + seeds
+  const summary = React.useMemo(() => {
+    const counts = { running: 0, completed: 0, review: 0, failed: 0, totalProcessed: 0 };
+    for (const a of unified) {
+      if (a.status === "running" || a.status === "active") counts.running++;
+      else if (a.status === "completed") {
+        counts.completed++;
+        counts.totalProcessed += a.total;
+      } else if (a.status === "review") counts.review++;
+      else if (a.status === "failed") counts.failed++;
+      if (!a.isSeed) counts.totalProcessed += a.progress;
+    }
+    return counts;
+  }, [unified]);
 
   return (
     <div className="page-container py-10">
@@ -103,7 +203,7 @@ export default function AgentsPage() {
           <p className="text-caption text-obsidian/50 mb-2">Agent Manager</p>
           <h1 className="text-display-md font-bold">Active sub-agents</h1>
           <p className="mt-2 text-body text-obsidian/70">
-            6 agents · 3 running · 2 done · 1 needs your eyes
+            {unified.length} agent{unified.length === 1 ? "" : "s"} · {summary.running} running · {summary.completed} done · {summary.review} needs your eyes
           </p>
         </div>
         <Button variant="light" size="md" href="/compose">
@@ -115,27 +215,30 @@ export default function AgentsPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
         <FeatureCard surface="dusty-sky" padding="md">
           <p className="text-caption opacity-60 mb-1">Running</p>
-          <p className="text-display-md font-bold">3</p>
+          <p className="text-display-md font-bold">{summary.running}</p>
         </FeatureCard>
         <FeatureCard surface="mist-mint" padding="md">
           <p className="text-caption opacity-60 mb-1">Completed</p>
-          <p className="text-display-md font-bold">2</p>
+          <p className="text-display-md font-bold">{summary.completed}</p>
         </FeatureCard>
         <FeatureCard surface="wisteria" padding="md">
           <p className="text-caption opacity-60 mb-1">Needs review</p>
-          <p className="text-display-md font-bold">1</p>
+          <p className="text-display-md font-bold">{summary.review}</p>
         </FeatureCard>
         <FeatureCard surface="desert-clay" padding="md">
           <p className="text-caption opacity-60 mb-1">Total processed</p>
-          <p className="text-display-md font-bold">802</p>
+          <p className="text-display-md font-bold">{summary.totalProcessed}</p>
         </FeatureCard>
       </div>
 
       {/* Agents list */}
       <div className="space-y-4">
-        {agents.map((agent) => {
-          const meta = statusMeta[agent.status];
-          const pct = Math.round((agent.progress / agent.total) * 100);
+        {unified.map((agent) => {
+          const meta = statusMeta[agent.status] ?? statusMeta.active;
+          const pct =
+            agent.total > 0
+              ? Math.min(100, Math.round((agent.progress / agent.total) * 100))
+              : 0;
           return (
             <Link
               key={agent.id}
@@ -149,13 +252,16 @@ export default function AgentsPage() {
               >
                 <div className="flex flex-col md:flex-row md:items-center gap-6">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3 mb-2">
+                    <div className="flex items-center gap-3 mb-2 flex-wrap">
                       <h3 className="text-heading-sm font-bold truncate">
                         {agent.name}
                       </h3>
                       <FeatureTag variant={meta.color}>
                         {meta.symbol} {meta.label}
                       </FeatureTag>
+                      {!agent.isSeed && (
+                        <FeatureTag variant="iron">saved</FeatureTag>
+                      )}
                     </div>
                     <p className="text-body-sm text-obsidian/70 mb-3">
                       {agent.goal}
@@ -165,13 +271,20 @@ export default function AgentsPage() {
                       <span>·</span>
                       <span>Started {agent.spawnedAt}</span>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {agent.skills.map((s) => (
-                        <FeatureTag key={s} variant="iron">
-                          {s}
-                        </FeatureTag>
-                      ))}
-                    </div>
+                    {agent.skills.length > 0 && (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {agent.skills.slice(0, 4).map((s) => (
+                          <FeatureTag key={s} variant="iron">
+                            {s}
+                          </FeatureTag>
+                        ))}
+                        {agent.skills.length > 4 && (
+                          <FeatureTag variant="iron">
+                            +{agent.skills.length - 4}
+                          </FeatureTag>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="md:w-64 md:text-right">
@@ -200,6 +313,17 @@ export default function AgentsPage() {
             </Link>
           );
         })}
+        {unified.length === 0 && (
+          <FeatureCard surface="paper-white" padding="lg" className="hairline text-center">
+            <p className="text-body text-obsidian/60">
+              No agents yet. Go to{" "}
+              <Link href="/compose" className="underline">
+                Composer
+              </Link>{" "}
+              to dispatch one.
+            </p>
+          </FeatureCard>
+        )}
       </div>
     </div>
   );
