@@ -47,16 +47,22 @@ interface ChromiumModule {
   executablePath: () => Promise<string>;
 }
 
-const g = globalThis as unknown as { __echo_browser?: BrowserHandle; __echo_chromium?: ChromiumModule };
+const g = globalThis as unknown as {
+  __echo_browser?: BrowserHandle;
+  __echo_chromium?: ChromiumModule;
+  __echo_import_attempted?: boolean;
+};
 const IDLE_TIMEOUT_MS = 60_000;
 
 async function getChromium(): Promise<ChromiumModule | null> {
   if (g.__echo_chromium) return g.__echo_chromium;
+  if (g.__echo_import_attempted) return null;
+  g.__echo_import_attempted = true;
   try {
-    const mod = (await import("@sparticuz/chromium")) as unknown as {
-      default?: ChromiumModule;
-    } & ChromiumModule;
-    const chromium: ChromiumModule = mod.default ?? mod;
+    // @ts-expect-error - ESM-only package, default import path varies
+    const mod = await import("@sparticuz/chromium");
+    const chromium: ChromiumModule =
+      (mod as { default?: ChromiumModule }).default ?? (mod as unknown as ChromiumModule);
     g.__echo_chromium = chromium;
     return chromium;
   } catch (err) {
