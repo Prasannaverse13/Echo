@@ -23,6 +23,11 @@ RUN pnpm install --frozen-lockfile
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app
 RUN corepack enable
+# Re-pin pnpm 9 in the builder stage too. corepack enable re-installs
+# pnpm 11 (the version pinned in pnpm-lock.yaml) at /usr/local/bin/pnpm,
+# overriding the pnpm 9 we installed in the deps stage. --force is
+# required because the corepack shim already exists.
+RUN npm install -g pnpm@9 --force
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # Build-time public env vars
