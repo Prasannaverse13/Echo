@@ -8,8 +8,10 @@ import {
   listRuns,
   type RunRecord,
 } from "@/lib/client/stores";
+import { buildRunsTools } from "@/lib/webmcp/runs-tools";
+import { useWebMCPTools } from "@/lib/webmcp/use-webmcp";
 
-const statusFilter = ["all", "success", "failed", "review", "running", "queued"] as const;
+const statusFilter = ["all", "success", "failed", "review", "running", "queued", "cancelled"] as const;
 type StatusFilter = (typeof statusFilter)[number];
 
 const variantByStatus: Record<RunRecord["status"], "mist-mint" | "desert-clay" | "iron" | "obsidian" | "wisteria"> = {
@@ -18,6 +20,7 @@ const variantByStatus: Record<RunRecord["status"], "mist-mint" | "desert-clay" |
   running: "wisteria",
   queued: "obsidian",
   completed: "mist-mint",
+  cancelled: "iron",
 };
 
 const POLL_MS = 1500;
@@ -73,6 +76,7 @@ export default function RunsPage() {
       review: 0,
       running: 0,
       queued: 0,
+      cancelled: 0,
     };
     for (const r of runs) {
       if (r.status === "completed") c.success += 1;
@@ -80,6 +84,7 @@ export default function RunsPage() {
       else if (r.status === "review") c.review += 1;
       else if (r.status === "running") c.running += 1;
       else if (r.status === "queued") c.queued += 1;
+      else if (r.status === "cancelled") c.cancelled += 1;
     }
     return c;
   }, [runs, now]);
@@ -91,8 +96,13 @@ export default function RunsPage() {
     if (filter === "running") return r.status === "running";
     if (filter === "queued") return r.status === "queued";
     if (filter === "failed") return r.status === "failed";
+    if (filter === "cancelled") return r.status === "cancelled";
     return true;
   });
+
+  // WebMCP: expose read-mostly run history tools to in-browser agents.
+  const runsTools = React.useMemo(() => buildRunsTools(), []);
+  useWebMCPTools(runsTools);
 
   const exportCsv = () => {
     if (typeof window === "undefined") return;

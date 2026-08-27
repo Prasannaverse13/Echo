@@ -10,6 +10,8 @@ import {
   type AgentRecord,
   type RunRecord,
 } from "@/lib/client/stores";
+import { buildComposerTools } from "@/lib/webmcp/composer-tools";
+import { useWebMCPTools } from "@/lib/webmcp/use-webmcp";
 
 type Phase = "input" | "planning" | "review" | "running" | "completed";
 
@@ -162,6 +164,25 @@ export default function ComposePage() {
       setDispatching(false);
     }
   };
+
+  // WebMCP: expose composer-specific tools to in-browser agents.
+  // Tools are rebuilt every render; the hook looks up the latest body
+  // at execute time so closures stay fresh (e.g. the agent sees the
+  // current goal/phase, not a stale snapshot).
+  const composerTools = React.useMemo(
+    () =>
+      buildComposerTools({
+        goal,
+        setGoal,
+        phase,
+        runId,
+        startPlanning,
+        dispatch,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [goal, phase, runId]
+  );
+  useWebMCPTools(composerTools);
 
   return (
     <div className="page-container py-10">

@@ -5,6 +5,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { FeatureTag } from "@/components/ui";
 import { logout, type Session } from "@/lib/auth/auth";
+import { buildGlobalTools } from "@/lib/webmcp/global-tools";
+import { useWebMCPTools } from "@/lib/webmcp/use-webmcp";
+import { WebMCPBadge } from "@/components/webmcp-badge";
+import { ToastHost } from "@/components/webmcp-toast-host";
 
 const navSections = [
   {
@@ -49,6 +53,18 @@ export function AppShell({
   const pathname = usePathname();
   const router = useRouter();
 
+  // Global WebMCP tools — available on every dashboard page. Pages
+  // (compose, runs, agents) add their own page-specific tools on top.
+  const globalTools = React.useMemo(
+    () =>
+      buildGlobalTools({
+        push: (href) => router.push(href),
+        pathname,
+      }),
+    [router, pathname]
+  );
+  useWebMCPTools(globalTools);
+
   function onLogout() {
     logout();
     router.push("/");
@@ -56,6 +72,14 @@ export function AppShell({
 
   return (
     <div className="min-h-screen flex bg-bone">
+      {/* Toast host (renders nothing until show_toast is called) */}
+      <ToastHost />
+
+      {/* WebMCP badge — fixed top-right, always visible when supported */}
+      <div className="fixed top-3 right-4 z-40">
+        <WebMCPBadge />
+      </div>
+
       {/* Sidebar */}
       <aside className="hidden md:flex w-[240px] lg:w-[256px] flex-col bg-paper-white border-r border-iron sticky top-0 h-screen shrink-0">
         <div className="p-6 border-b border-iron">

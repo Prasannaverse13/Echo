@@ -58,3 +58,9 @@ gcloud_err.log
 # (e.g. cron/schedule handlers that the user explicitly removed).
 # Not committed to git; safe to recreate.
 .archived/
+
+# local build/tsc logs (regenerated)
+build-out.log
+tsc-out.log
+echo_build.log
+echo_build_err.log

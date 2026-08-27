@@ -22,7 +22,7 @@ export interface RunRecord {
   goal?: string;
   inputs: Array<{ id: string; payload: unknown }>;
   totalInputs: number;
-  status: "queued" | "running" | "completed" | "failed" | "review";
+  status: "queued" | "running" | "completed" | "failed" | "review" | "cancelled";
   progress: number;
   startedAt: string;
   finishedAt?: string;

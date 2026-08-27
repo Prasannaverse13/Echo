@@ -1,5 +1,10 @@
+"use client";
+
+import * as React from "react";
 import Link from "next/link";
 import { Button, FeatureTag, FeatureCard } from "@/components/ui";
+import { buildAgentsTools } from "@/lib/webmcp/agents-tools";
+import { useWebMCPTools } from "@/lib/webmcp/use-webmcp";
 
 const agents = [
   {
@@ -84,6 +89,13 @@ const statusMeta: Record<string, { color: "dusty-sky" | "wisteria" | "desert-cla
 };
 
 export default function AgentsPage() {
+  // WebMCP: expose saved-agent query + lifecycle tools. The page
+  // itself still uses static seed data for visual demo; the tools
+  // operate on the live localStorage so an agent can act on whatever
+  // the user actually has saved.
+  const agentsTools = React.useMemo(() => buildAgentsTools(), []);
+  useWebMCPTools(agentsTools);
+
   return (
     <div className="page-container py-10">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
