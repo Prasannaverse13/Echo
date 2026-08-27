@@ -190,9 +190,14 @@ export function ComposerCard({
 
       const localRun: RunRecord = {
         id: ok.runId,
-        skillId: ok.agentId ?? localAgent.id,
+        // Use the LOCAL agent id for both the run and the agent
+        // record so the agents-page filter (`r.agentId === id`)
+        // finds linked runs. The server's ok.agentId (when GCP is
+        // connected) is for its own tracking on the worker side; we
+        // keep the user-facing linkage consistent.
+        skillId: localAgent.id,
         skillName: localAgent.name,
-        agentId: ok.agentId ?? localAgent.id,
+        agentId: localAgent.id,
         goal: slot.goal,
         inputs: Array.from({ length: ok.inputs ?? 5 }, (_, i) => ({
           id: `input_${i + 1}`,
@@ -219,7 +224,7 @@ export function ComposerCard({
 
       onUpdate({
         runId: ok.runId,
-        agentId: ok.agentId ?? localAgent.id,
+        agentId: localAgent.id,
         dispatchMessage: ok.message,
         dispatchGcp: ok.gcp,
         phase: "completed",

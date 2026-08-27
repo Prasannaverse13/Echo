@@ -16,6 +16,12 @@
  * previous version called `notFound()` for every real agent id and
  * resulted in a white screen whenever a user clicked "View agent"
  * on a /runs detail page.
+ *
+ * The "Convert to skill" button is wired to the skill.md exporter:
+ * when the user clicks it, a portable skill.md file containing the
+ * goal, plan, action log, and inline screenshots is downloaded to
+ * the user's machine. The file is self-contained and re-runnable
+ * from any Echo workspace.
  */
 
 import * as React from "react";
@@ -29,6 +35,7 @@ import {
   type AgentRecord,
   type RunRecord,
 } from "@/lib/client/stores";
+import { downloadSkillMd } from "@/lib/client/skill-md";
 
 const seedAgent = {
   id: "rfp-responder",
@@ -146,18 +153,21 @@ export default function AgentDetailPage() {
         ? storedAgent?.status ?? "active"
         : (seed as typeof seedAgent).status
     ];
+  const linkedRuns = runs;
+
+  // Progress: average of linked-run progress (only meaningful when
+  // there are runs; otherwise show 0% rather than "0/0 done" which
+  // looks broken).
   const progressPct = isStored
-    ? Math.min(
-        100,
-        Math.round(
-          (runs.reduce((s, r) => s + (r.progress ?? 0), 0) /
-            Math.max(1, runs.length * 100)) *
-            100
+    ? linkedRuns.length > 0
+      ? Math.round(
+          linkedRuns.reduce((s, r) => s + (r.progress ?? 0), 0) / linkedRuns.length
         )
-      )
+      : 0
     : Math.round(
         ((seed as typeof seedAgent).progress / (seed as typeof seedAgent).total) * 100
       );
+  const completedRuns = linkedRuns.filter((r) => r.status === "completed").length;
   const name = isStored ? storedAgent?.name ?? "Untitled agent" : (seed as typeof seedAgent).name;
   const goal = isStored ? storedAgent?.goal ?? "" : (seed as typeof seedAgent).goal;
   const parent = isStored ? "Auto-composed by Skill Manager" : (seed as typeof seedAgent).parent;
@@ -168,7 +178,19 @@ export default function AgentDetailPage() {
     ? (storedAgent?.subtasks ?? []).map((s) => s.matchedSkill).filter(Boolean)
     : (seed as typeof seedAgent).skills;
   const subtasks = isStored ? storedAgent?.subtasks ?? [] : [];
-  const linkedRuns = runs;
+
+  // Find the most recent completed run with action data — that's the
+  // best candidate for a skill.md export. Fall back to the most
+  // recent run of any status.
+  const exportableRun =
+    linkedRuns.find(
+      (r) => r.status === "completed" && (r.actions?.length ?? 0) > 0
+    ) ?? linkedRuns[0] ?? null;
+
+  const handleExportSkill = () => {
+    if (!exportableRun) return;
+    downloadSkillMd(exportableRun, storedAgent);
+  };
 
   return (
     <div className="page-container py-10">
@@ -200,14 +222,21 @@ export default function AgentDetailPage() {
             {parent} · Started {spawnedAt}
           </p>
         </div>
-        <div className="flex gap-3">
-          <Button variant="outline-light" size="md">
-            ⏸ Pause
-          </Button>
-          <Button variant="light" size="md">
-            ⏹ Stop
-          </Button>
-        </div>
+        {/* Pause / Stop are demo affordances for the seed agent. Real
+            saved agents don't have a worker process the user can
+            pause yet (Cloud Run worker/browser weren't deployed in
+            this demo) so we hide the controls rather than render
+            dead buttons. */}
+        {!isStored && (
+          <div className="flex gap-3">
+            <Button variant="outline-light" size="md">
+              ⏸ Pause
+            </Button>
+            <Button variant="light" size="md">
+              ⏹ Stop
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Progress hero */}
@@ -218,13 +247,13 @@ export default function AgentDetailPage() {
       >
         <div className="flex items-center justify-between mb-3">
           <span className="text-caption text-paper-white/60 uppercase tracking-wider">
-            {isStored
-              ? `Linked runs (${linkedRuns.length})`
-              : "Progress"}
+            {isStored ? `Linked runs (${linkedRuns.length})` : "Progress"}
           </span>
           <span className="text-heading font-bold tabular-nums">
             {isStored
-              ? `${linkedRuns.filter((r) => r.status === "completed").length}/${linkedRuns.length} done`
+              ? linkedRuns.length > 0
+                ? `${completedRuns}/${linkedRuns.length} done`
+                : "0%"
               : `${(seed as typeof seedAgent).progress} / ${(seed as typeof seedAgent).total}`}
           </span>
         </div>
@@ -238,11 +267,9 @@ export default function AgentDetailPage() {
           <span>{progressPct}% complete</span>
           <span>
             {isStored
-              ? `Last activity: ${
-                  linkedRuns[0]
-                    ? new Date(linkedRuns[0].startedAt).toLocaleString()
-                    : "—"
-                }`
+              ? linkedRuns.length > 0
+                ? `Last activity: ${new Date(linkedRuns[0].startedAt).toLocaleString()}`
+                : "Dispatch a run to start tracking activity"
               : `ETA: ${(seed as typeof seedAgent).eta}`}
           </span>
         </div>
@@ -406,12 +433,29 @@ export default function AgentDetailPage() {
               Save as skill
             </h3>
             <p className="text-body-sm mb-3">
-              This run is doing great. Convert it to a reusable skill the
-              team can clone.
+              {exportableRun
+                ? "Download a portable skill.md file containing the goal, plan, action log, and inline screenshots. Drop it into any Echo workspace to re-run."
+                : "No runs yet — dispatch a goal from the Composer first, then come back to export it as a reusable skill."}
             </p>
-            <Button variant="light" size="sm" className="w-full">
-              Convert to skill
+            <Button
+              variant="light"
+              size="sm"
+              className="w-full"
+              disabled={!exportableRun}
+              onClick={handleExportSkill}
+              title={
+                exportableRun
+                  ? `Download skill.md for run ${exportableRun.id.slice(-12)}`
+                  : "No run available to export"
+              }
+            >
+              ↓ Download skill.md
             </Button>
+            {exportableRun && (
+              <p className="mt-2 text-[10px] text-obsidian/50 text-center">
+                From run <code className="font-mono">{exportableRun.id.slice(-12)}</code>
+              </p>
+            )}
           </FeatureCard>
         </div>
       </div>

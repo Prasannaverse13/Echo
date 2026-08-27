@@ -4,9 +4,12 @@ import * as React from "react";
 import { FeatureCard, FeatureTag, Button } from "@/components/ui";
 import { BrowserConsole } from "@/components/BrowserConsole";
 import {
+  getAgent,
   getUserId,
+  type AgentRecord,
   type RunRecord,
 } from "@/lib/client/stores";
+import { downloadSkillMd } from "@/lib/client/skill-md";
 
 const POLL_MS = 1500;
 
@@ -40,6 +43,7 @@ export default function RunDetailPage({
   const [run, setRun] = React.useState<RunRecord | null>(null);
   const [now, setNow] = React.useState(Date.now());
   const [id, setId] = React.useState<string>("");
+  const [agent, setAgent] = React.useState<AgentRecord | null>(null);
 
   // Next.js 15 app router: params is a Promise. Resolve it client-side.
   React.useEffect(() => {
@@ -58,7 +62,11 @@ export default function RunDetailPage({
     if (!id) return;
     const refresh = async () => {
       const { getRun } = await import("@/lib/client/stores");
-      setRun(getRun(userId, id) ?? null);
+      const fresh = getRun(userId, id) ?? null;
+      setRun(fresh);
+      if (fresh?.agentId) {
+        setAgent(getAgent(userId, fresh.agentId) ?? null);
+      }
     };
     refresh();
     const interval = setInterval(refresh, POLL_MS);
@@ -205,9 +213,20 @@ export default function RunDetailPage({
       )}
 
       {run.agentId && (
-        <div className="mb-6">
+        <div className="mb-6 flex flex-wrap items-center gap-3">
           <Button variant="outline-light" size="md" href={`/agents/${run.agentId}`}>
             View agent →
+          </Button>
+          {/* skill.md export — available on every run, not just
+              completed ones, so the user can also save a partial
+              trace for debugging. */}
+          <Button
+            variant="light"
+            size="md"
+            onClick={() => downloadSkillMd(run, agent)}
+            title="Download a portable skill.md file containing the goal, plan, action log, and inline screenshots"
+          >
+            ↓ Download skill.md
           </Button>
         </div>
       )}
