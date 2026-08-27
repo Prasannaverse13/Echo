@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import chromium from "@sparticuz/chromium";
 import { chromium as playwright } from "playwright-core";
 
 /**
@@ -23,10 +22,15 @@ import { chromium as playwright } from "playwright-core";
  * closed after 60s of idle to avoid memory leaks.
  *
  * Error handling: any failure (cold-start timeout, navigation
- * timeout, etc.) returns a 200 with `ok: false` so the caller can
- * log the failure to the run's action log without throwing. The
- * client-side simulator is the visual fallback when the real
- * browser can't keep up.
+ * timeout, missing chromium, etc.) returns a 200 with `ok: false`
+ * so the caller can log the failure to the run's action log
+ * without throwing. The client-side simulator is the visual
+ * fallback when the real browser can't keep up.
+ *
+ * @sparticuz/chromium is loaded via dynamic import because it's
+ * ESM-only and the Next.js route handler runs in a CommonJS-ish
+ * context. Lazy loading also avoids the cold-start cost on routes
+ * that never use it.
  */
 
 export const runtime = "nodejs";
@@ -38,29 +42,51 @@ interface BrowserHandle {
   lastUsed: number;
 }
 
-const g = globalThis as unknown as { __echo_browser?: BrowserHandle };
+interface ChromiumModule {
+  args: string[];
+  executablePath: () => Promise<string>;
+}
+
+const g = globalThis as unknown as { __echo_browser?: BrowserHandle; __echo_chromium?: ChromiumModule };
 const IDLE_TIMEOUT_MS = 60_000;
 
-async function getBrowser(): Promise<BrowserHandle["browser"]> {
+async function getChromium(): Promise<ChromiumModule | null> {
+  if (g.__echo_chromium) return g.__echo_chromium;
+  try {
+    const mod = (await import("@sparticuz/chromium")) as unknown as {
+      default?: ChromiumModule;
+    } & ChromiumModule;
+    const chromium: ChromiumModule = mod.default ?? mod;
+    g.__echo_chromium = chromium;
+    return chromium;
+  } catch (err) {
+    console.error("[browser] failed to load @sparticuz/chromium:", err);
+    return null;
+  }
+}
+
+async function getBrowser(): Promise<BrowserHandle["browser"] | null> {
   if (g.__echo_browser && Date.now() - g.__echo_browser.lastUsed < IDLE_TIMEOUT_MS) {
     g.__echo_browser.lastUsed = Date.now();
     return g.__echo_browser.browser;
   }
-  // (Re)launch. @sparticuz/chromium handles extracting the binary to
-  // /tmp on cold start. --single-process + --no-zygote keep memory
-  // low enough for the 1024MB Vercel function limit.
-  const browser = await playwright.launch({
-    args: [
-      ...chromium.args,
-      "--single-process",
-      "--no-zygote",
-      "--disable-dev-shm-usage",
-    ],
-    executablePath: await chromium.executablePath(),
-    headless: true,
-  });
-  g.__echo_browser = { browser, lastUsed: Date.now() };
-  return browser;
+  const chromium = await getChromium();
+  if (!chromium) return null;
+  try {
+    const execPath = await chromium.executablePath();
+    console.log("[browser] launching chromium at", execPath);
+    const browser = await playwright.launch({
+      args: [...chromium.args, "--disable-dev-shm-usage"],
+      executablePath: execPath,
+      headless: true,
+    });
+    console.log("[browser] chromium launched");
+    g.__echo_browser = { browser, lastUsed: Date.now() };
+    return browser;
+  } catch (err) {
+    console.error("[browser] chromium launch failed:", err);
+    return null;
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -72,10 +98,20 @@ export async function POST(req: NextRequest) {
   const target = body.url.startsWith("http")
     ? body.url
     : `https://${body.url}`;
+  console.log("[browser] navigating to", target);
 
   let context: import("playwright-core").BrowserContext | undefined;
   try {
     const browser = await getBrowser();
+    if (!browser) {
+      return NextResponse.json({
+        ok: false,
+        url: target,
+        error:
+          "Real headless browser unavailable on this server (chromium failed to load or launch). The simulator is filling in this step.",
+        elapsedMs: Date.now() - startMs,
+      });
+    }
     context = await browser.newContext({
       viewport: { width: 1280, height: 720 },
       userAgent:
@@ -87,6 +123,7 @@ export async function POST(req: NextRequest) {
     const screenshot = await page.screenshot({ type: "png", fullPage: false });
     const elapsedMs = Date.now() - startMs;
     await context.close().catch(() => undefined);
+    console.log("[browser] done", { title, elapsedMs });
     return NextResponse.json({
       ok: true,
       url: target,
@@ -97,6 +134,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     await context?.close().catch(() => undefined);
     const message = err instanceof Error ? err.message : String(err);
+    console.error("[browser] error", message);
     return NextResponse.json(
       {
         ok: false,
