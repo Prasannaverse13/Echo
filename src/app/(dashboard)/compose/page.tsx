@@ -7,21 +7,11 @@ import {
   getUserId,
   saveAgent,
   saveRun,
-  saveTrigger,
   type AgentRecord,
-  type TriggerRecord,
+  type RunRecord,
 } from "@/lib/client/stores";
 
-type Phase = "input" | "planning" | "review" | "schedule" | "scheduled" | "running" | "completed";
-
-const CRON_PRESETS: Array<{ label: string; cron: string }> = [
-  { label: "Every Monday 9am",     cron: "0 9 * * 1" },
-  { label: "Every weekday 8am",    cron: "0 8 * * 1-5" },
-  { label: "Every Friday 5pm",     cron: "0 17 * * 5" },
-  { label: "Every Sunday midnight", cron: "0 0 * * 0" },
-  { label: "Every 15 min",         cron: "*/15 * * * *" },
-  { label: "Every hour",           cron: "0 * * * *" },
-];
+type Phase = "input" | "planning" | "review" | "running" | "completed";
 
 interface SubTask {
   num: number;
@@ -31,31 +21,38 @@ interface SubTask {
   estTime: string;
 }
 
+interface Plan {
+  subtasks: SubTask[];
+  totalEstTime: string;
+  totalEstCost: string;
+  reasoning: string;
+}
+
+interface DispatchResponse {
+  ok: boolean;
+  runId: string;
+  agentId: string | null;
+  plan: Plan;
+  inputs: number;
+  goal: string;
+  gcp: "connected" | "disabled";
+  message: string;
+  skill: { suggestedName: string; intent: string; steps: Array<{ num: number; title: string; detail: string; at: string }> };
+}
+
 const exampleGoal =
-  "Every Friday at 5pm, get this week's new HubSpot leads, enrich them with LinkedIn, draft a personalized outreach email for each, and put the drafts in my Gmail drafts folder.";
+  "Get this week's new HubSpot leads, enrich each with LinkedIn, draft a personalized outreach email, and save the drafts in my Gmail drafts folder.";
 
 export default function ComposePage() {
   const userId = React.useMemo(getUserId, []);
   const [phase, setPhase] = React.useState<Phase>("input");
   const [goal, setGoal] = React.useState("");
-  const [plan, setPlan] = React.useState<{
-    subtasks: SubTask[];
-    totalEstTime: string;
-    totalEstCost: string;
-    reasoning: string;
-  } | null>(null);
+  const [plan, setPlan] = React.useState<Plan | null>(null);
   const [agentId, setAgentId] = React.useState<string | null>(null);
   const [runId, setRunId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [scheduleCron, setScheduleCron] = React.useState<string>(CRON_PRESETS[0].cron);
-  const [schedulePreset, setSchedulePreset] = React.useState<string>(CRON_PRESETS[0].label);
-  const [scheduleName, setScheduleName] = React.useState<string>("");
-  const [scheduleSubmitting, setScheduleSubmitting] = React.useState<boolean>(false);
-  const [scheduledInfo, setScheduledInfo] = React.useState<{
-    id: string;
-    cron: string;
-    nextRunAt: string;
-  } | null>(null);
+  const [dispatching, setDispatching] = React.useState<boolean>(false);
+  const [dispatchResult, setDispatchResult] = React.useState<DispatchResponse | null>(null);
 
   const startPlanning = async () => {
     setError(null);
@@ -70,8 +67,13 @@ export default function ComposePage() {
         body: JSON.stringify({ goal: goalText }),
       });
       if (!res.ok) throw new Error(`Compose failed: ${res.status}`);
-      const data = await res.json();
-      setPlan(data);
+      const data: Plan & { ok: boolean } = await res.json();
+      setPlan({
+        subtasks: data.subtasks ?? [],
+        totalEstTime: data.totalEstTime ?? "10m",
+        totalEstCost: data.totalEstCost ?? "$0.18",
+        reasoning: data.reasoning ?? "",
+      });
       setPhase("review");
     } catch (err) {
       setError(
@@ -83,6 +85,84 @@ export default function ComposePage() {
     }
   };
 
+  const dispatch = async () => {
+    if (!plan) return;
+    setError(null);
+    setDispatching(true);
+    setPhase("running");
+
+    try {
+      // Mirror the agent to localStorage so the /agents page lights up
+      // immediately, even before the server's write completes.
+      const localAgent: AgentRecord = {
+        id: agentId ?? `agent_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        name: deriveAgentName(goal),
+        goal,
+        subtasks: plan.subtasks,
+        totalEstTime: plan.totalEstTime,
+        totalEstCost: plan.totalEstCost,
+        reasoning: plan.reasoning,
+        status: "active",
+        createdAt: new Date().toISOString(),
+      };
+      saveAgent(userId, localAgent);
+      setAgentId(localAgent.id);
+      appendLog(userId, {
+        level: "action",
+        agent: "echo-manager",
+        msg: `Dispatching autonomous agent for: "${goal.slice(0, 80)}"`,
+      });
+
+      const res = await fetch("/api/agents/run-autonomous", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal, inputCount: 5 }),
+      });
+      const data = (await res.json()) as Partial<DispatchResponse> & { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error ?? `Dispatch failed: ${res.status}`);
+      }
+      const ok = data as DispatchResponse;
+      setRunId(ok.runId);
+      setDispatchResult(ok);
+      if (ok.agentId) setAgentId(ok.agentId);
+
+      // Mirror the run to localStorage so /runs shows it instantly
+      const localRun: RunRecord = {
+        id: ok.runId,
+        skillId: ok.agentId ?? localAgent.id,
+        skillName: localAgent.name,
+        agentId: ok.agentId ?? localAgent.id,
+        goal,
+        inputs: Array.from({ length: ok.inputs ?? 5 }, (_, i) => ({
+          id: `input_${i + 1}`,
+          payload: { row: i + 1 },
+        })),
+        totalInputs: ok.inputs ?? 5,
+        status: "running",
+        progress: 0,
+        startedAt: new Date().toISOString(),
+        gcp: ok.gcp,
+        message: ok.message,
+      };
+      saveRun(userId, localRun);
+
+      appendLog(userId, {
+        level: "success",
+        agent: "echo-manager",
+        scope: ok.runId,
+        msg: `Run ${ok.runId} dispatched. Agent driving headless browser.`,
+      });
+
+      setPhase("completed");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to dispatch the agent.");
+      setPhase("review");
+    } finally {
+      setDispatching(false);
+    }
+  };
+
   return (
     <div className="page-container py-10">
       <div className="mb-8">
@@ -90,8 +170,9 @@ export default function ComposePage() {
         <h1 className="text-display-md font-bold">Describe a goal. Echo composes the agent.</h1>
         <p className="mt-3 text-body text-obsidian/70 max-w-2xl">
           Tell Echo what you want done, in plain English. The Skill Manager
-          breaks it into steps, finds the right skills, and spawns a
-          sub-agent to run it — autonomously, in the background.
+          breaks it into steps, finds the right skills, and dispatches a
+          sub-agent to run it — autonomously, in the background, with a
+          real headless browser.
         </p>
       </div>
 
@@ -120,9 +201,9 @@ export default function ComposePage() {
 
             <div className="mt-6 pt-6 border-t border-iron flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
               <div className="flex flex-wrap gap-2">
-                <FeatureTag variant="iron">⏰ Schedule</FeatureTag>
-                <FeatureTag variant="iron">⚡ Trigger</FeatureTag>
-                <FeatureTag variant="iron">▶ One-shot</FeatureTag>
+                <FeatureTag variant="iron">🧠 Gemini</FeatureTag>
+                <FeatureTag variant="iron">🌐 Real browser</FeatureTag>
+                <FeatureTag variant="iron">⏵ Runs once</FeatureTag>
               </div>
               <Button variant="light" size="md" onClick={startPlanning}>
                 ❖ Compose agent
@@ -194,7 +275,7 @@ export default function ComposePage() {
       )}
 
       {/* Review phase */}
-      {(phase === "review" || phase === "scheduled" || phase === "running" || phase === "completed") && plan && (
+      {(phase === "review" || phase === "running" || phase === "completed") && plan && (
         <div className="max-w-4xl space-y-6">
           <FeatureCard surface="sandstone" padding="lg">
             <p className="text-caption font-medium uppercase opacity-60 mb-2">
@@ -271,115 +352,38 @@ export default function ComposePage() {
             </FeatureCard>
           </div>
 
-          <FeatureCard surface="deep-teal" padding="lg" className="text-paper-white">
-            <h3 className="text-heading-sm font-bold mb-3">Schedule this agent</h3>
+          <FeatureCard surface="obsidian" padding="lg" className="text-paper-white">
+            <h3 className="text-heading-sm font-bold mb-3">Dispatch the autonomous agent</h3>
             <p className="text-body-sm text-paper-white/70 mb-4">
-              Runs on a cron schedule you pick, automatically, in the background.
-              The agent opens a real headless browser, runs the recorded skills
-              on each scheduled input, and writes results to Firestore.
+              Echo will fire this plan into the background. The agent opens
+              a real headless Chromium, calls Gemini to decide what to do at
+              each step, and writes the result to Firestore. You don't
+              schedule anything — you dispatch once, and the agent does the
+              rest on its own.
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
-              <div>
-                <label className="text-caption uppercase opacity-60 block mb-1">
-                  Name
-                </label>
-                <input
-                  value={scheduleName}
-                  onChange={(e) => setScheduleName(e.target.value)}
-                  placeholder="Weekly lead enrichment"
-                  className="w-full px-3 py-2 rounded-lg bg-paper-white/10 border border-paper-white/20 text-paper-white text-body-sm placeholder:text-paper-white/40 focus:outline-none focus:border-paper-white/60"
-                />
-              </div>
-              <div>
-                <label className="text-caption uppercase opacity-60 block mb-1">
-                  Schedule
-                </label>
-                <select
-                  value={schedulePreset}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setSchedulePreset(v);
-                    const p = CRON_PRESETS.find((x) => x.label === v);
-                    if (p) setScheduleCron(p.cron);
-                  }}
-                  className="w-full px-3 py-2 rounded-lg bg-paper-white/10 border border-paper-white/20 text-paper-white text-body-sm focus:outline-none focus:border-paper-white/60"
-                >
-                  {CRON_PRESETS.map((p) => (
-                    <option key={p.label} value={p.label} className="text-obsidian">
-                      {p.label} — {p.cron}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="md:col-span-2">
-                <label className="text-caption uppercase opacity-60 block mb-1">
-                  Cron expression
-                </label>
-                <input
-                  value={scheduleCron}
-                  onChange={(e) => {
-                    setScheduleCron(e.target.value);
-                    const p = CRON_PRESETS.find((x) => x.cron === e.target.value);
-                    if (p) setSchedulePreset(p.label);
-                    else setSchedulePreset("Custom");
-                  }}
-                  placeholder="0 9 * * 1"
-                  className="w-full px-3 py-2 rounded-lg bg-paper-white/10 border border-paper-white/20 text-paper-white text-body-sm font-mono placeholder:text-paper-white/40 focus:outline-none focus:border-paper-white/60"
-                />
-                <p className="text-caption text-paper-white/50 mt-1">
-                  Five fields: minute, hour, day-of-month, month, day-of-week. Use * for any. Examples above.
-                </p>
-              </div>
-            </div>
             <div className="flex flex-wrap gap-3">
               <Button
                 variant="dark"
                 size="md"
-                onClick={() => doSchedule()}
-                disabled={scheduleSubmitting}
+                onClick={dispatch}
+                disabled={dispatching || phase === "running"}
               >
-                {scheduleSubmitting ? "⟳ Scheduling…" : "✓ Schedule background agent"}
+                {dispatching
+                  ? "⟳ Dispatching…"
+                  : phase === "running"
+                  ? "⟳ Running…"
+                  : "▶ Dispatch to autonomous agent"}
               </Button>
-              <Button variant="outline-dark" size="md" onClick={() => doRunNow()}>
-                ▶ Run once now
-              </Button>
-              <Button variant="outline-dark" size="md" onClick={() => setPhase("input")}>
+              <Button
+                variant="outline-dark"
+                size="md"
+                onClick={() => setPhase("input")}
+                disabled={dispatching || phase === "running"}
+              >
                 ✎ Edit goal
               </Button>
             </div>
           </FeatureCard>
-
-          {phase === "scheduled" && scheduledInfo && (
-            <FeatureCard surface="mist-mint" padding="lg">
-              <div className="flex items-center gap-3 mb-3">
-                <span className="text-3xl">✓</span>
-                <div className="flex-1">
-                  <h3 className="text-heading-sm font-bold">Background agent scheduled</h3>
-                  <p className="text-body-sm opacity-70 mt-1">
-                    Echo will fire this agent automatically. Vercel Cron ticks
-                    every hour; the Cloud Run worker picks up the queued run
-                    and drives the browser.
-                  </p>
-                </div>
-              </div>
-              <dl className="grid grid-cols-2 gap-y-2 gap-x-6 text-caption">
-                <dt className="opacity-60">Schedule</dt>
-                <dd className="font-mono">{scheduledInfo.cron}</dd>
-                <dt className="opacity-60">Next run</dt>
-                <dd>{new Date(scheduledInfo.nextRunAt).toLocaleString()}</dd>
-                <dt className="opacity-60">Schedule id</dt>
-                <dd className="font-mono">{scheduledInfo.id}</dd>
-              </dl>
-              <div className="mt-4 flex flex-wrap gap-3">
-                <a className="text-caption underline-offset-4 hover:underline" href="/triggers">
-                  View all triggers →
-                </a>
-                <a className="text-caption underline-offset-4 hover:underline" href="/agents">
-                  View agents →
-                </a>
-              </div>
-            </FeatureCard>
-          )}
 
           {phase === "running" && runId && (
             <FeatureCard surface="obsidian" padding="lg" className="text-paper-white">
@@ -390,7 +394,8 @@ export default function ComposePage() {
                 <div className="flex-1">
                   <h3 className="text-heading-sm font-bold">Run started</h3>
                   <p className="text-body-sm text-paper-white/60 mt-1">
-                    Sub-agents are processing the inputs in parallel. Watch progress on the{" "}
+                    The autonomous agent is driving the headless browser.
+                    Watch progress on the{" "}
                     <a className="underline" href="/runs">Runs</a> page.
                   </p>
                 </div>
@@ -403,13 +408,41 @@ export default function ComposePage() {
             <FeatureCard surface="mist-mint" padding="lg">
               <div className="flex items-center gap-3 mb-3">
                 <span className="text-3xl">✓</span>
-                <div>
-                  <h3 className="text-heading-sm font-bold">Run completed</h3>
+                <div className="flex-1">
+                  <h3 className="text-heading-sm font-bold">Autonomous agent dispatched</h3>
                   <p className="text-body-sm opacity-70 mt-1">
-                    Echo finished processing. See the full run on the{" "}
-                    <a className="underline" href="/runs">Runs</a> page.
+                    Run <code className="font-mono">{runId}</code> is queued
+                    in the worker. The Cloud Run worker is driving the
+                    headless browser; events stream into Firestore as the
+                    agent decides what to do.
                   </p>
                 </div>
+              </div>
+              {dispatchResult && (
+                <p className="text-body-sm opacity-80 mb-4">{dispatchResult.message}</p>
+              )}
+              <div className="flex flex-wrap gap-3">
+                <a className="text-caption underline-offset-4 hover:underline" href={`/runs/${runId}`}>
+                  View run →
+                </a>
+                <a className="text-caption underline-offset-4 hover:underline" href="/runs">
+                  All runs →
+                </a>
+                <a className="text-caption underline-offset-4 hover:underline" href="/agents">
+                  View agents →
+                </a>
+                <button
+                  onClick={() => {
+                    setPhase("input");
+                    setPlan(null);
+                    setRunId(null);
+                    setDispatchResult(null);
+                    setError(null);
+                  }}
+                  className="text-caption underline-offset-4 hover:underline"
+                >
+                  + Compose another
+                </button>
               </div>
             </FeatureCard>
           )}
@@ -417,149 +450,10 @@ export default function ComposePage() {
       )}
     </div>
   );
+}
 
-  async function persistAgent(status: AgentRecord["status"]): Promise<AgentRecord> {
-    if (!plan) throw new Error("no plan");
-    const id = agentId ?? `agent_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const agent: AgentRecord = {
-      id,
-      name: deriveAgentName(goal),
-      goal,
-      subtasks: plan.subtasks,
-      totalEstTime: plan.totalEstTime,
-      totalEstCost: plan.totalEstCost,
-      reasoning: plan.reasoning,
-      status,
-      createdAt: new Date().toISOString(),
-    };
-    saveAgent(userId, agent);
-    setAgentId(id);
-    return agent;
-  }
-
-  function deriveAgentName(g: string): string {
-    const first = g.split(/[.!?\n]/)[0].trim();
-    const words = first.split(/\s+/).slice(0, 6).join(" ");
-    return words.length > 50 ? words.slice(0, 47) + "..." : words || "Untitled agent";
-  }
-
-  function doSchedule() {
-    setError(null);
-    setScheduleSubmitting(true);
-    persistAgent("active")
-      .then(async (agent) => {
-        // Persist a local trigger mirror so the /triggers page shows it
-        // even when GCP / Vercel Cron is unavailable
-        const trigger: TriggerRecord = {
-          id: `trg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          name: scheduleName.trim() || `Run ${agent.name}`,
-          type: "Schedule",
-          skillId: agent.id,
-          skillName: agent.name,
-          status: "active",
-          schedule: scheduleCron,
-          lastFired: "—",
-          createdAt: new Date().toISOString(),
-        };
-        saveTrigger(userId, trigger);
-
-        // Hit the real scheduling API. If GCP is configured the
-        // schedule persists in Firestore and Vercel Cron will tick
-        // it hourly. If not, we just keep the local mirror so the
-        // /triggers page still shows it.
-        const res = await fetch("/api/agents/schedule", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: trigger.name,
-            goal: agent.goal,
-            cron: scheduleCron,
-            skillLibrary: agent.subtasks.map((s) => ({
-              id: s.matchedSkill,
-              name: s.matchedSkill,
-              description: s.title,
-            })),
-            enabled: true,
-          }),
-        });
-        const data = await res.json();
-        if (res.ok && data?.schedule) {
-          setScheduledInfo({
-            id: data.schedule.id,
-            cron: data.schedule.cron,
-            nextRunAt: data.schedule.nextRunAt,
-          });
-          appendLog(userId, {
-            level: "success",
-            agent: "echo-manager",
-            msg: `Background agent scheduled: ${trigger.name} (${data.schedule.cron})`,
-          });
-          setPhase("scheduled");
-        } else {
-          // Demo / no-GCP fallback — show the local trigger and proceed
-          setScheduledInfo({
-            id: trigger.id,
-            cron: scheduleCron,
-            nextRunAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-          });
-          appendLog(userId, {
-            level: "info",
-            agent: "echo-manager",
-            msg: `Schedule saved locally (GCP not connected): ${trigger.name}`,
-          });
-          setPhase("scheduled");
-        }
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : "Failed to schedule");
-        setPhase("review");
-      })
-      .finally(() => setScheduleSubmitting(false));
-  }
-
-  function doRunNow() {
-    setError(null);
-    setPhase("running");
-    persistAgent("active").then((agent) => {
-      const id = `run_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      setRunId(id);
-      saveRun(userId, {
-        id,
-        skillId: agent.id,
-        skillName: agent.name,
-        agentId: agent.id,
-        goal: agent.goal,
-        inputs: Array.from({ length: 5 }).map((_, i) => ({ id: `input_${i + 1}`, payload: { row: i + 1 } })),
-        totalInputs: 5,
-        status: "running",
-        progress: 0,
-        startedAt: new Date().toISOString(),
-        gcp: "disabled",
-        message: "Sub-agent spawning",
-      });
-      appendLog(userId, { level: "info", agent: "echo-manager", scope: id, msg: `Run ${id} started for agent "${agent.name}"` });
-      appendLog(userId, { level: "action", agent: agent.id, scope: id, msg: "Calling gemini-3.5-flash to decompose plan" });
-      // Simulate the run ticking forward
-      const tick = setInterval(() => {
-        const existing = (typeof window !== "undefined")
-          ? JSON.parse(window.localStorage.getItem(`echo.${userId}.runs`) ?? "[]")
-              .find((r: { id: string }) => r.id === id)
-          : null;
-        if (!existing) {
-          clearInterval(tick);
-          return;
-        }
-        const next = Math.min(100, (existing.progress ?? 0) + 10);
-        saveRun(userId, { ...existing, progress: next });
-        if (next >= 100) {
-          clearInterval(tick);
-          saveRun(userId, { ...existing, progress: 100, status: "completed", finishedAt: new Date().toISOString(), durationSec: 42 });
-          appendLog(userId, { level: "success", agent: "echo-manager", scope: id, msg: `Run ${id} completed` });
-          setPhase("completed");
-        } else {
-          appendLog(userId, { level: "info", agent: agent.id, scope: id, msg: `Processed ${next}% of inputs` });
-        }
-      }, 1500);
-    });
-  }
+function deriveAgentName(g: string): string {
+  const first = g.split(/[.!?\n]/)[0].trim();
+  const words = first.split(/\s+/).slice(0, 6).join(" ");
+  return words.length > 50 ? words.slice(0, 47) + "..." : words || "Untitled agent";
 }
