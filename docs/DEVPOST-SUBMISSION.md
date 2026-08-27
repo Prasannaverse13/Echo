@@ -9,8 +9,9 @@ A Taskmaster agent that watches you perform a workflow on screen once, then runs
 ## Try it out
 - **Live site:** https://echo-one-liard.vercel.app
 - **Repo:** https://github.com/Prasannaverse13/Echo
-- **Demo video:** https://echo-one-liard.vercel.app/demo.mp4
+- **Demo video (download mirror):** https://echo-one-liard.vercel.app/demo.mp4
 - **Architecture diagram:** https://github.com/Prasannaverse13/Echo/blob/main/docs/architecture.png
+- **YouTube link (final):** *(fill in after YouTube upload — see "Demo video" section below)*
 
 ---
 
@@ -74,7 +75,7 @@ Google Cloud
   - `POST /api/agents/compose` → returns composed sub-tasks from Gemini
   - `POST /api/skills/reconstruct` → returns full structured skill (name, intent, steps, triggers, integrations)
   - `POST /api/integrations/telegram` → forwards real Telegram messages
-- **Auth flow** — Firebase Web SDK (Email + Google) with namespaced localStorage
+- **Auth flow** — Custom localStorage-backed auth (Email + Password with FNV-1a password hash, sliding 30-day session TTL) + **real Google OAuth 2.0** with full consent screen (no GSI, no FedCM, no popup-vs-redirect-mode debate — direct `window.location.href` to `https://accounts.google.com/o/oauth2/v2/auth?response_type=code` + server-side code exchange using `GOOGLE_CLIENT_SECRET`). The OAuth client "Echo Web Client" was created in `echo-hackathon-2026` and the `GOOGLE_CLIENT_SECRET` was rotated to a freshly-minted value during the build.
 - **Worker** — `src/worker/index.ts` (Node 20, framework-free, esbuild bundle, distroless container)
 - **CI/CD** — `cloudbuild.yaml` builds both images and deploys both services (`--min-instances=1` for worker, `--no-allow-unauthenticated` for worker)
 - **Pub/Sub** — Topic `echo-runs` + subscription `echo-runs-worker` (pull, ack 120s)
@@ -135,7 +136,7 @@ Echo's agent (`src/lib/agents/echo-agent.ts`) follows the **ADK `LlmAgent` patte
 - **Frameworks:** Next.js 16 (Turbopack), React 19, Tailwind v4, Framer Motion, GSAP
 - **AI / Agent:** Google Gemini 3.5 Flash (AI Studio), Vertex AI Gemini 2.5 (fallback), ADK-style LlmAgent pattern
 - **Google Cloud:** Cloud Run, Pub/Sub, Firestore, Secret Manager, Cloud Build, Artifact Registry, Vertex AI
-- **Auth:** Firebase Web SDK (Email + Google)
+- **Auth:** Custom localStorage (FNV-1a + sliding 30-day TTL) + Google OAuth 2.0 server-side code exchange
 - **Integrations:** Telegram Bot API (live)
 - **Tooling:** pnpm, esbuild, distroless Node 20, PowerShell, ffmpeg, Python matplotlib
 - **Hosting:** Vercel
@@ -156,3 +157,16 @@ Echo's agent (`src/lib/agents/echo-agent.ts`) follows the **ADK `LlmAgent` patte
 - The dashboard counters (293 runs today, 98.4% success) are populated from real Firestore reads against the GCP project
 - The architecture diagram (`docs/architecture.png`) shows what is deployed, including the worker that the Cloud Build trigger will roll out automatically once a repo-link UI bug is bypassed
 - All 4 API routes are tested against live GCP traffic, not mocks
+- **Google sign-in is real** — the Continue with Google button on `/login` and `/signup` opens Google's full consent screen (not a small One-Tap card), exchanges the auth code server-side with a freshly-rotated client secret, and signs the user in. Try it on the live site.
+
+## Demo video
+
+The 3:36 demo video (`echo-demo.mp4`, 1.77 MB, 1280×720, H.264) is committed to the repo at `demo-out/echo-demo.mp4` and mirrored at https://echo-one-liard.vercel.app/demo.mp4.
+
+To publish on Devpost, upload the file to YouTube as **Unlisted** and paste the URL above. Suggested title/description:
+
+- **Title:** "Echo — Show it once. Run it forever. (All Things Agentic Hackathon)"
+- **Description:** "Live demo of Echo, a Taskmaster agent that watches you perform a workflow on screen once and then runs it autonomously against thousands of inputs in parallel on Google Cloud. Built in 7 days for the All Things Agentic Hackathon. Live site: https://echo-one-liard.vercel.app · Repo: https://github.com/Prasannaverse13/Echo"
+- **Tags:** `ai-agents`, `google-cloud`, `gemini`, `taskmaster`, `hackathon`, `agentic-ai`, `nextjs`
+
+You can upload from https://studio.youtube.com/ → Create → Upload videos → Select file → Set visibility to "Unlisted" → Publish.
