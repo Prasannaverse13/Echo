@@ -14,6 +14,19 @@
 
 const NS = (userId: string, key: string) => `echo.${userId}.${key}`;
 
+export interface BrowserAction {
+  /** ISO timestamp of when the action was performed. */
+  ts: string;
+  /** "navigate" | "click" | "type" | "extract" | "save" — semantic kind. */
+  kind: "navigate" | "click" | "type" | "extract" | "save" | "think";
+  /** URL the agent is on, if any (for navigate/click/extract). */
+  url?: string;
+  /** Short human-readable label, e.g. "Open HubSpot" or "Click 'New Lead'". */
+  label: string;
+  /** Optional free-form detail, e.g. what was extracted or typed. */
+  detail?: string;
+}
+
 export interface RunRecord {
   id: string;
   skillId: string;
@@ -29,6 +42,13 @@ export interface RunRecord {
   durationSec?: number;
   message?: string;
   gcp?: "connected" | "disabled";
+  /** Live browser-console log: the stream of actions the agent is
+   *  "performing" in the headless browser. Populated by the
+   *  client-side run simulator so the user can see the agent
+   *  navigate, click, type, and extract in real time. */
+  actions?: BrowserAction[];
+  /** The URL the agent is currently "on". Mirrors the latest navigate. */
+  currentUrl?: string;
 }
 
 export interface LogRecord {
@@ -275,4 +295,79 @@ export function getUserId(): string {
     /* ignore */
   }
   return "anon";
+}
+
+/* ------------------------------------------------------------------ */
+/* Composer draft                                                       */
+/* ------------------------------------------------------------------ */
+/* The composer's in-flight state (goal text, plan, dispatched runId,
+   etc.) is persisted to localStorage so a user can navigate to /runs
+   or /agents to follow what's happening and still come back to the
+   composer to see the same goal + plan + dispatched-run card. Without
+   this, useState in compose/page.tsx is wiped on unmount and the
+   user lands on a blank input box. */
+
+export interface ComposerDraft {
+  phase: "input" | "planning" | "review" | "running" | "completed";
+  goal: string;
+  plan: PlanShape | null;
+  agentId: string | null;
+  runId: string | null;
+  error: string | null;
+  dispatching: boolean;
+  /** server message echoed back from /api/agents/run-autonomous */
+  dispatchMessage: string | null;
+  /** GCP status echoed from the dispatch API */
+  dispatchGcp: "connected" | "disabled" | null;
+  /** ISO timestamp of when this draft was last saved */
+  savedAt: string;
+}
+
+export interface PlanShape {
+  subtasks: Array<{
+    num: number;
+    title: string;
+    matchedSkill: string;
+    parallel: boolean;
+    estTime: string;
+  }>;
+  totalEstTime: string;
+  totalEstCost: string;
+  reasoning: string;
+}
+
+const COMPOSER_KEY = "composer";
+
+export function loadComposerDraft(userId: string): ComposerDraft | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(NS(userId, COMPOSER_KEY));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed as ComposerDraft;
+  } catch {
+    return null;
+  }
+}
+
+export function saveComposerDraft(userId: string, draft: ComposerDraft) {
+  if (typeof window === "undefined") return;
+  try {
+    const toSave: ComposerDraft = { ...draft, savedAt: new Date().toISOString() };
+    window.localStorage.setItem(NS(userId, COMPOSER_KEY), JSON.stringify(toSave));
+    window.dispatchEvent(new CustomEvent(`echo:store:${COMPOSER_KEY}`, { detail: toSave }));
+  } catch {
+    /* ignore quota errors */
+  }
+}
+
+export function clearComposerDraft(userId: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(NS(userId, COMPOSER_KEY));
+    window.dispatchEvent(new CustomEvent(`echo:store:${COMPOSER_KEY}`, { detail: null }));
+  } catch {
+    /* ignore */
+  }
 }

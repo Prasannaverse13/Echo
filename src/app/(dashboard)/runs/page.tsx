@@ -48,6 +48,7 @@ export default function RunsPage() {
   const [runs, setRuns] = React.useState<RunRecord[]>([]);
   const [filter, setFilter] = React.useState<StatusFilter>("all");
   const [now, setNow] = React.useState(Date.now());
+  const [highlightId, setHighlightId] = React.useState<string | null>(null);
 
   // Initial load + live polling
   React.useEffect(() => {
@@ -61,6 +62,25 @@ export default function RunsPage() {
       window.removeEventListener("echo:store:runs", onLocal as EventListener);
     };
   }, [userId]);
+
+  // Deep-link from the composer (?runId=xxx): pre-select the run's status
+  // filter so it's guaranteed to be in the visible list, then highlight +
+  // scroll the matching row into view.
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const runId = params.get("runId");
+    if (!runId) return;
+    setHighlightId(runId);
+    // Wait a tick for the table to render, then scroll.
+    const t = setTimeout(() => {
+      const el = document.getElementById(`run-row-${runId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [runs]);
 
   // For "running" rows: re-render every second so the elapsed timer ticks
   React.useEffect(() => {
@@ -197,8 +217,19 @@ export default function RunsPage() {
               </tr>
             </thead>
             <tbody>
-              {visible.map((run) => (
-                <tr key={run.id} className="border-b border-iron last:border-0 hover:bg-bone/50">
+              {visible.map((run) => {
+                const isHighlighted = highlightId === run.id;
+                return (
+                <tr
+                  key={run.id}
+                  id={`run-row-${run.id}`}
+                  onClick={() => (window.location.href = `/runs/${run.id}`)}
+                  className={`border-b border-iron last:border-0 cursor-pointer transition-colors ${
+                    isHighlighted
+                      ? "bg-wisteria/10 ring-1 ring-wisteria/40"
+                      : "hover:bg-bone/50"
+                  }`}
+                >
                   <td className="py-3 text-caption font-mono">{run.id.slice(0, 14)}</td>
                   <td className="py-3 text-body-sm font-medium">{run.skillName ?? run.skillId}</td>
                   <td className="py-3 text-body-sm text-obsidian/70 tabular-nums">{run.totalInputs}</td>
@@ -230,7 +261,8 @@ export default function RunsPage() {
                   </td>
                   <td className="py-3 text-caption text-obsidian/60">{relativeTime(run.startedAt)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </FeatureCard>

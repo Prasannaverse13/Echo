@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { FeatureCard, FeatureTag, Button } from "@/components/ui";
+import { BrowserConsole } from "@/components/BrowserConsole";
 import {
   getUserId,
   type RunRecord,
@@ -182,6 +183,16 @@ export default function RunDetailPage({
           </p>
         )}
       </FeatureCard>
+
+      {/* Live browser console — the agent's action stream */}
+      <div className="mb-6">
+        <h2 className="text-heading-sm font-bold mb-3">Browser console</h2>
+        <BrowserConsole
+          actions={run.actions}
+          currentUrl={run.currentUrl}
+          status={run.status}
+        />
+      </div>
 
       {/* Goal + agent */}
       {run.goal && (
