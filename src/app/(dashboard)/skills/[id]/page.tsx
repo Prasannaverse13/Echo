@@ -347,9 +347,9 @@ export default function SkillDetailPage() {
       </Link>
 
       {/* Hero */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10">
-        <div>
-          <div className="flex items-center gap-3 mb-3">
+      <div className="flex flex-col md:flex-row md:items-start justify-between gap-6 mb-10">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-3 mb-3 flex-wrap">
             <FeatureTag variant="obsidian">Skill</FeatureTag>
             <FeatureTag variant="iron">
               {skill.source === "recorder"
@@ -369,10 +369,10 @@ export default function SkillDetailPage() {
             {skill.description}
           </p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-2 shrink-0">
           <Link href="/record">
             <Button variant="outline-light" size="md">
-              ✎ Record a new one
+              ✎ Record
             </Button>
           </Link>
           <Button
@@ -396,11 +396,11 @@ export default function SkillDetailPage() {
             }}
             title="Download a portable skill.md with the procedure, rules, output schema, and validation"
           >
-            ↓ skill.md
+            ↓ Download .md
           </Button>
           <Link href="/compose">
             <Button variant="light" size="md">
-              ▶ Compose with this
+              ▶ Compose
             </Button>
           </Link>
         </div>
