@@ -30,7 +30,7 @@
  * what the agent was able to verify vs what it inferred.
  */
 
-import type { AgentRecord, RunRecord } from "./stores";
+import type { AgentRecord, RunRecord, SkillRecord } from "./stores";
 
 interface BrowserAction {
   ts: string;
@@ -784,7 +784,15 @@ interface RecordedSkill {
   triggers?: string[];
   integrations?: string[];
   steps: RecordedStep[];
-  source?: "aistudio" | "vertex" | "mock" | "manual" | "recorder" | null;
+  source?:
+    | "aistudio"
+    | "vertex"
+    | "mock"
+    | "manual"
+    | "recorder"
+    | "composer"
+    | "seed"
+    | null;
   /** Optional reference back to a video file (Blob or URL). */
   videoRef?: { name: string; sizeBytes: number; durationSec: number };
 }
@@ -975,6 +983,63 @@ export function downloadSkillFromRecord(skill: RecordedSkill): void {
   if (typeof window === "undefined") return;
   const content = generateSkillFromRecord(skill);
   const slugName = (skill.name || "echo-skill")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "echo-skill";
+  triggerDownload(content, `${slugName}.md`);
+}
+
+// ---------------------------------------------------------------------------
+// Saved-skill generator (used by /skills/[id] to re-export a previously
+// saved skill — recorded, composed, or seed — as a portable skill.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a `RecordedSkill` view of a `SkillRecord` so it can flow
+ * through `generateSkillFromRecord` unchanged. The two shapes are
+ * 90% identical; this just maps the field names and fills in
+ * sensible defaults.
+ */
+function skillRecordToRecorded(record: SkillRecord): RecordedSkill {
+  return {
+    name: record.name,
+    description: record.description,
+    intent: record.intent,
+    triggers: record.triggers,
+    integrations: record.integrations,
+    steps: (record.steps ?? []).map((s) => ({
+      num: s.num,
+      title: s.title,
+      detail: s.detail,
+      at: s.at,
+    })),
+    source: record.source,
+  };
+}
+
+/**
+ * Generate the operational skill.md for a previously-saved
+ * `SkillRecord` (e.g. one created via /record, /compose, or a
+ * seed). The output format is identical to
+ * `generateSkillFromRecord` — frontmatter, Description, When to
+ * Use, Inputs, Procedure, Output, Source, Rules, Error Handling,
+ * Validation, Version. This is the version called from the
+ * per-skill detail page when the user clicks "↓ skill.md".
+ */
+export function generateSkillFromSaved(record: SkillRecord): string {
+  return generateSkillFromRecord(skillRecordToRecorded(record));
+}
+
+/**
+ * Trigger a browser download of the skill.md for a previously-saved
+ * `SkillRecord`. The file is named after the skill so multiple
+ * exports don't collide.
+ */
+export function downloadSkillFromSaved(record: SkillRecord): void {
+  if (typeof window === "undefined") return;
+  const content = generateSkillFromSaved(record);
+  const slugName = (record.name || "echo-skill")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")

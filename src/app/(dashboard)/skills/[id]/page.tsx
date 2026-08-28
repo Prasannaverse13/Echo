@@ -4,7 +4,13 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Button, FeatureTag, FeatureCard } from "@/components/ui";
-import { listSkills, type SkillRecord } from "@/lib/client/stores";
+import {
+  appendLog,
+  getUserId,
+  listSkills,
+  type SkillRecord,
+} from "@/lib/client/stores";
+import { downloadSkillFromSaved } from "@/lib/client/skill-md";
 
 type Step = { num: number; title: string; detail: string; at?: string };
 
@@ -229,12 +235,46 @@ function fromLocalStorage(s: SkillRecord): RichSkill {
   };
 }
 
+/**
+ * Synthesize a `SkillRecord` from a hardcoded `RichSkill` so the
+ * download button can fire for demo seeds too. The synthesized
+ * record is never written back to localStorage — it lives only in
+ * component state for the duration of the page visit.
+ */
+function richSkillToRecord(s: RichSkill, id: string): SkillRecord {
+  return {
+    id,
+    name: s.name,
+    description: s.description,
+    color: s.color,
+    trigger: s.trigger,
+    steps: s.steps.map((st) => ({
+      num: st.num,
+      title: st.title,
+      detail: st.detail,
+      at: st.at ?? "",
+    })),
+    createdAt: new Date().toISOString(),
+    source:
+      s.source === "recorder"
+        ? "recorder"
+        : s.source === "manual"
+          ? "manual"
+          : s.source === "composer"
+            ? "composer"
+            : "seed",
+    intent: s.intent,
+    triggers: undefined,
+    integrations: s.integrations,
+  };
+}
+
 export default function SkillDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id;
   const [state, setState] = useState<
     | { kind: "loading" }
-    | { kind: "found"; skill: RichSkill }
+    | { kind: "found"; skill: RichSkill; record: SkillRecord }
     | { kind: "notfound" }
   >({ kind: "loading" });
 
@@ -245,7 +285,12 @@ export default function SkillDetailPage() {
     }
     // 1) hardcoded demo skills
     if (skillData[id]) {
-      setState({ kind: "found", skill: skillData[id] });
+      const rich = skillData[id];
+      setState({
+        kind: "found",
+        skill: rich,
+        record: richSkillToRecord(rich, id),
+      });
       return;
     }
     // 2) user-created skills in localStorage
@@ -254,7 +299,7 @@ export default function SkillDetailPage() {
       const all = listSkills(userId);
       const found = all.find((s) => s.id === id);
       if (found) {
-        setState({ kind: "found", skill: fromLocalStorage(found) });
+        setState({ kind: "found", skill: fromLocalStorage(found), record: found });
         return;
       }
     } catch {
@@ -330,6 +375,29 @@ export default function SkillDetailPage() {
               ✎ Record a new one
             </Button>
           </Link>
+          <Button
+            variant="outline-light"
+            size="md"
+            onClick={() => {
+              try {
+                downloadSkillFromSaved(state.record);
+                appendLog(getUserId(), {
+                  level: "info",
+                  agent: "echo-skills",
+                  msg: `Exported skill.md for "${state.skill.name}" (${state.record.source})`,
+                });
+              } catch (err) {
+                appendLog(getUserId(), {
+                  level: "error",
+                  agent: "echo-skills",
+                  msg: `Failed to export skill.md for "${state.skill.name}": ${err instanceof Error ? err.message : String(err)}`,
+                });
+              }
+            }}
+            title="Download a portable skill.md with the procedure, rules, output schema, and validation"
+          >
+            ↓ skill.md
+          </Button>
           <Link href="/compose">
             <Button variant="light" size="md">
               ▶ Compose with this
