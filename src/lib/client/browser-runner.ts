@@ -72,7 +72,7 @@ interface Stop {
   url: string;
   site: string;
   label: string;
-  actions: ScriptAction[];
+  actions?: ScriptAction[];
 }
 
 interface RunnerOpts {
@@ -131,7 +131,8 @@ async function runStops(opts: RunnerOpts): Promise<void> {
 
     // Emit a "think" action announcing the action script so the
     // user can see what the agent plans to do on this page.
-    const planLabel = (stop.actions ?? [])
+    const stopActions = stop.actions ?? [];
+    const planLabel = stopActions
       .map((a) => `${a.type}:${a.label ?? a.selector ?? ""}`)
       .join(" → ");
     appendAction(userId, runId, {
@@ -145,14 +146,14 @@ async function runStops(opts: RunnerOpts): Promise<void> {
       level: "action",
       agent: "echo-browser",
       scope: runId,
-      msg: `→ ${stop.site}: navigating to ${stop.url} and running ${(stop.actions ?? []).length} browser action(s)`,
+      msg: `→ ${stop.site}: navigating to ${stop.url} and running ${stopActions.length} browser action(s)`,
     });
 
     try {
       const res = await fetch("/api/browser/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: stop.url, actions: stop.actions ?? [] }),
+        body: JSON.stringify({ url: stop.url, actions: stopActions }),
       });
       const data = (await res.json()) as {
         ok: boolean;

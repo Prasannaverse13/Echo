@@ -197,6 +197,65 @@ export default function AgentDetailPage() {
     downloadSkillPack(exportableRun, storedAgent);
   };
 
+  const [reDispatching, setReDispatching] = React.useState(false);
+  const handleReDispatch = async () => {
+    if (!isStored || !storedAgent?.goal) return;
+    if (reDispatching) return;
+    setReDispatching(true);
+    try {
+      const { saveRun, appendLog } = await import("@/lib/client/stores");
+      const { startRunSimulator } = await import("@/lib/client/run-simulator");
+      const { startBrowserRunner } = await import("@/lib/client/browser-runner");
+      const localAgent = storedAgent;
+      const res = await fetch("/api/agents/run-autonomous", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal: localAgent.goal, inputCount: 5 }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        runId?: string;
+        browserStops?: Array<{ url: string; site: string; label: string }>;
+        error?: string;
+      };
+      if (!res.ok || !data.runId) {
+        throw new Error(data.error ?? `Re-dispatch failed: ${res.status}`);
+      }
+      const newRun = {
+        id: data.runId,
+        skillId: localAgent.id,
+        skillName: localAgent.name,
+        agentId: localAgent.id,
+        goal: localAgent.goal,
+        inputs: Array.from({ length: 5 }, (_, i) => ({
+          id: `input_${i + 1}`,
+          payload: { row: i + 1 },
+        })),
+        totalInputs: 5,
+        status: "running" as const,
+        progress: 0,
+        startedAt: new Date().toISOString(),
+        gcp: "disabled" as const,
+        message: "Re-dispatched from agent page.",
+      };
+      saveRun(userId, newRun);
+      appendLog(userId, {
+        level: "action",
+        agent: "echo-manager",
+        scope: data.runId,
+        msg: `Re-dispatched from agent ${localAgent.id}`,
+      });
+      startRunSimulator({ userId, runId: data.runId, totalInputs: 5, goal: localAgent.goal });
+      if (data.browserStops?.length) {
+        startBrowserRunner({ userId, runId: data.runId, stops: data.browserStops });
+      }
+      router.push(`/runs/${data.runId}`);
+    } catch (err) {
+      console.error("Re-dispatch failed:", err);
+      setReDispatching(false);
+    }
+  };
+
   return (
     <div className="page-container py-10">
       <Link
@@ -231,8 +290,21 @@ export default function AgentDetailPage() {
             saved agents don't have a worker process the user can
             pause yet (Cloud Run worker/browser weren't deployed in
             this demo) so we hide the controls rather than render
-            dead buttons. */}
-        {!isStored && (
+            dead buttons. For saved agents, the Re-dispatch button
+            lets the user fire the same goal again. */}
+        {isStored ? (
+          <div className="flex gap-3">
+            <Button
+              variant="light"
+              size="md"
+              onClick={handleReDispatch}
+              disabled={reDispatching}
+              title="Re-dispatch the same goal with a fresh runId"
+            >
+              {reDispatching ? "⟳ Re-dispatching…" : "▶ Re-dispatch"}
+            </Button>
+          </div>
+        ) : (
           <div className="flex gap-3">
             <Button variant="outline-light" size="md">
               ⏸ Pause
