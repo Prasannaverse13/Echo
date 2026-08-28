@@ -263,15 +263,60 @@ function extractBrowserStops(goal: string): Array<{
   url: string;
   site: string;
   label: string;
+  /** Ordered list of real browser actions to perform on this page.
+   *  Generated from a per-site playbook so the action log shows
+   *  real "click / fill / extract" steps instead of a single
+   *  navigate. Steps that target auth-walled elements will fail at
+   *  runtime (no session) — the action log captures that and the
+   *  simulator fills in around it. */
+  actions: Array<{
+    type: "click" | "fill" | "type" | "press" | "wait" | "hover" | "scroll" | "extract" | "screenshot" | "select";
+    selector?: string;
+    value?: string;
+    text?: string;
+    key?: string;
+    ms?: number;
+    direction?: "up" | "down" | "top" | "bottom";
+    amount?: number;
+    label: string;
+    timeout?: number;
+  }>;
 }> {
   const lower = goal.toLowerCase();
-  const stops: Array<{ url: string; site: string; label: string }> = [];
+  const stops: Array<{
+    url: string;
+    site: string;
+    label: string;
+    actions: Array<{
+      type: "click" | "fill" | "type" | "press" | "wait" | "hover" | "scroll" | "extract" | "screenshot" | "select";
+      selector?: string;
+      value?: string;
+      text?: string;
+      key?: string;
+      ms?: number;
+      direction?: "up" | "down" | "top" | "bottom";
+      amount?: number;
+      label: string;
+      timeout?: number;
+    }>;
+  }> = [];
 
   if (/(hubspot|\blead)/.test(lower)) {
     stops.push({
       url: "https://app.hubspot.com",
       site: "HubSpot",
       label: "Open HubSpot and pull this week's new leads",
+      actions: [
+        { type: "wait", ms: 800, label: "Wait for HubSpot to render" },
+        { type: "extract", selector: "title", label: "Capture the page title" },
+        {
+          type: "extract",
+          selector: "input[type=email], input[name=email], #username",
+          label: "Look for the email input",
+          timeout: 2000,
+        },
+        { type: "screenshot", label: "Final screenshot" },
+      ],
     });
   }
   if (/(linkedin|\benrich)/.test(lower)) {
@@ -279,6 +324,12 @@ function extractBrowserStops(goal: string): Array<{
       url: "https://www.linkedin.com",
       site: "LinkedIn",
       label: "Enrich each lead with job title + current company",
+      actions: [
+        { type: "wait", ms: 600, label: "Wait for LinkedIn to load" },
+        { type: "extract", selector: "title", label: "Capture the page title" },
+        { type: "scroll", direction: "down", amount: 400, label: "Scroll to see more content" },
+        { type: "screenshot", label: "Final screenshot" },
+      ],
     });
   }
   if (/(gmail|\bemail|\boutreach|\bdraft)/.test(lower)) {
@@ -286,6 +337,24 @@ function extractBrowserStops(goal: string): Array<{
       url: "https://mail.google.com",
       site: "Gmail",
       label: "Open Gmail and prepare a draft for each lead",
+      actions: [
+        { type: "wait", ms: 800, label: "Wait for Gmail to render" },
+        { type: "extract", selector: "title", label: "Capture the page title" },
+        {
+          type: "click",
+          selector: "[aria-label*='Compose' i], [gh='cm'], div[role='button']",
+          label: "Click the Compose button",
+          timeout: 2000,
+        },
+        {
+          type: "fill",
+          selector: "input[placeholder*='To' i], textarea[name='to']",
+          value: "lead@example.com",
+          label: "Fill the To field",
+          timeout: 2000,
+        },
+        { type: "screenshot", label: "Final screenshot of the draft" },
+      ],
     });
   }
   if (/(slack|\bnotify|\balert)/.test(lower)) {
@@ -293,6 +362,11 @@ function extractBrowserStops(goal: string): Array<{
       url: "https://app.slack.com",
       site: "Slack",
       label: "Post a summary to #sales on Slack",
+      actions: [
+        { type: "wait", ms: 800, label: "Wait for Slack to render" },
+        { type: "extract", selector: "title", label: "Capture the page title" },
+        { type: "screenshot", label: "Final screenshot" },
+      ],
     });
   }
   if (/(stripe|\bpayment|\bbilling|\bsubscription)/.test(lower)) {
@@ -300,6 +374,11 @@ function extractBrowserStops(goal: string): Array<{
       url: "https://dashboard.stripe.com",
       site: "Stripe",
       label: "Open Stripe dashboard and pull usage data",
+      actions: [
+        { type: "wait", ms: 800, label: "Wait for Stripe to render" },
+        { type: "extract", selector: "title", label: "Capture the page title" },
+        { type: "screenshot", label: "Final screenshot" },
+      ],
     });
   }
   if (/(notion|\bdoc|\bwiki|\bpage)/.test(lower)) {
@@ -307,6 +386,12 @@ function extractBrowserStops(goal: string): Array<{
       url: "https://www.notion.so",
       site: "Notion",
       label: "Open the target Notion page",
+      actions: [
+        { type: "wait", ms: 800, label: "Wait for Notion to render" },
+        { type: "extract", selector: "title", label: "Capture the page title" },
+        { type: "scroll", direction: "down", amount: 300, label: "Scroll the page" },
+        { type: "screenshot", label: "Final screenshot" },
+      ],
     });
   }
   if (/(sheet|\bgsheet|\bspreadsheet|\bexcel)/.test(lower)) {
@@ -314,6 +399,33 @@ function extractBrowserStops(goal: string): Array<{
       url: "https://docs.google.com/spreadsheets",
       site: "Google Sheets",
       label: "Open the destination Google Sheet",
+      actions: [
+        { type: "wait", ms: 800, label: "Wait for Sheets to render" },
+        { type: "extract", selector: "title", label: "Capture the page title" },
+        { type: "screenshot", label: "Final screenshot" },
+      ],
+    });
+  }
+  // Hacker News — useful for "search the top stories about…" goals
+  // because the site has zero auth and rich action surface (search
+  // bar, story links, comments).
+  if (/(hacker\s*news|hn\.|\bnews\.ycombinator)/.test(lower)) {
+    stops.push({
+      url: "https://news.ycombinator.com",
+      site: "Hacker News",
+      label: "Open Hacker News and read the top stories",
+      actions: [
+        { type: "wait", ms: 600, label: "Wait for HN to load" },
+        { type: "extract", selector: "title", label: "Capture the page title" },
+        {
+          type: "extract",
+          selector: ".titleline a",
+          label: "Extract the top story headline",
+        },
+        { type: "click", selector: "a[href='newest']", label: "Click 'new' to see newest" },
+        { type: "wait", ms: 600, label: "Wait for the newest page" },
+        { type: "screenshot", label: "Final screenshot" },
+      ],
     });
   }
 
@@ -322,12 +434,32 @@ function extractBrowserStops(goal: string): Array<{
   if (stops.length === 0) {
     const urlMatch = goal.match(/https?:\/\/[^\s]+/i);
     if (urlMatch) {
-      stops.push({ url: urlMatch[0], site: "Target", label: "Open the target URL" });
+      stops.push({
+        url: urlMatch[0],
+        site: "Target",
+        label: "Open the target URL",
+        actions: [
+          { type: "wait", ms: 600, label: "Wait for the page to load" },
+          { type: "extract", selector: "title", label: "Capture the page title" },
+          { type: "screenshot", label: "Final screenshot" },
+        ],
+      });
     } else {
       stops.push({
         url: "https://www.google.com",
         site: "Google",
         label: "Search for the target service",
+        actions: [
+          { type: "wait", ms: 600, label: "Wait for Google to load" },
+          { type: "extract", selector: "title", label: "Capture the page title" },
+          {
+            type: "fill",
+            selector: "input[name='q']",
+            value: goal.slice(0, 60),
+            label: "Type the goal into the search box",
+          },
+          { type: "screenshot", label: "Final screenshot" },
+        ],
       });
     }
   }

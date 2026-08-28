@@ -44,7 +44,23 @@ interface DispatchResponse {
   gcp: "connected" | "disabled";
   message: string;
   skill: { suggestedName: string; intent: string; steps: Array<{ num: number; title: string; detail: string; at: string }> };
-  browserStops: Array<{ url: string; site: string; label: string }>;
+  browserStops: Array<{
+    url: string;
+    site: string;
+    label: string;
+    actions: Array<{
+      type: "click" | "fill" | "type" | "press" | "wait" | "hover" | "scroll" | "extract" | "screenshot" | "select";
+      selector?: string;
+      value?: string;
+      text?: string;
+      key?: string;
+      ms?: number;
+      direction?: "up" | "down" | "top" | "bottom";
+      amount?: number;
+      label: string;
+      timeout?: number;
+    }>;
+  }>;
 }
 
 const exampleGoal =
