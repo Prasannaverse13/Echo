@@ -35,7 +35,7 @@ import {
   type AgentRecord,
   type RunRecord,
 } from "@/lib/client/stores";
-import { downloadSkillMd } from "@/lib/client/skill-md";
+import { downloadSkillMd, downloadSkillPack } from "@/lib/client/skill-md";
 
 const seedAgent = {
   id: "rfp-responder",
@@ -190,6 +190,11 @@ export default function AgentDetailPage() {
   const handleExportSkill = () => {
     if (!exportableRun) return;
     downloadSkillMd(exportableRun, storedAgent);
+  };
+
+  const handleExportSkillPack = () => {
+    if (!exportableRun) return;
+    downloadSkillPack(exportableRun, storedAgent);
   };
 
   return (
@@ -434,23 +439,37 @@ export default function AgentDetailPage() {
             </h3>
             <p className="text-body-sm mb-3">
               {exportableRun
-                ? "Download a portable skill.md file containing the goal, plan, action log, and inline screenshots. Drop it into any Echo workspace to re-run."
+                ? "Download a portable skill.md file with the goal, procedure, rules, output schema, and validation. Drop it into any Echo workspace to re-run."
                 : "No runs yet — dispatch a goal from the Composer first, then come back to export it as a reusable skill."}
             </p>
-            <Button
-              variant="light"
-              size="sm"
-              className="w-full"
-              disabled={!exportableRun}
-              onClick={handleExportSkill}
-              title={
-                exportableRun
-                  ? `Download skill.md for run ${exportableRun.id.slice(-12)}`
-                  : "No run available to export"
-              }
-            >
-              ↓ Download skill.md
-            </Button>
+            <div className="space-y-2">
+              <Button
+                variant="light"
+                size="sm"
+                className="w-full"
+                disabled={!exportableRun}
+                onClick={handleExportSkill}
+                title={
+                  exportableRun
+                    ? `Download skill.md for run ${exportableRun.id.slice(-12)}`
+                    : "No run available to export"
+                }
+              >
+                ↓ Download skill.md
+              </Button>
+              {subtasks.length > 1 && (
+                <Button
+                  variant="outline-light"
+                  size="sm"
+                  className="w-full"
+                  disabled={!exportableRun}
+                  onClick={handleExportSkillPack}
+                  title={`Download ${subtasks.length} per-subtask skill.md files plus a manifest`}
+                >
+                  ↓ Download skill pack ({subtasks.length} files)
+                </Button>
+              )}
+            </div>
             {exportableRun && (
               <p className="mt-2 text-[10px] text-obsidian/50 text-center">
                 From run <code className="font-mono">{exportableRun.id.slice(-12)}</code>
