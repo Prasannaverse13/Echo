@@ -417,26 +417,31 @@ export function ComposerCard({
       {/* Actions */}
       <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-iron/40" onClick={(e) => e.stopPropagation()}>
         {slot.phase === "input" && (
-          <Button variant="dark" size="sm" onClick={startPlanning}>
+          // variant="light" = bg-obsidian + text-paper-white, the
+          // high-contrast "filled" look. The card itself is
+          // bg-paper-white so the previous variant="dark" (white on
+          // white) made the button effectively invisible — the
+          // text alone was the only thing the user could see.
+          <Button variant="light" size="sm" onClick={startPlanning}>
             ❖ Compose
           </Button>
         )}
         {slot.phase === "planning" && (
-          <Button variant="dark" size="sm" disabled>
+          <Button variant="light" size="sm" disabled>
             ⟳ Composing…
           </Button>
         )}
         {slot.phase === "review" && (
           <>
             <Button
-              variant="dark"
+              variant="light"
               size="sm"
               onClick={dispatch}
               disabled={slot.dispatching}
             >
               {slot.dispatching ? "⟳ Dispatching…" : "▶ Dispatch"}
             </Button>
-            <Button variant="outline-dark" size="sm" onClick={() => onUpdate({ phase: "input" })}>
+            <Button variant="outline-light" size="sm" onClick={() => onUpdate({ phase: "input" })}>
               ✎ Edit
             </Button>
           </>
