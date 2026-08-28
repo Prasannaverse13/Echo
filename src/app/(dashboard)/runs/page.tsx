@@ -227,6 +227,7 @@ export default function RunsPage() {
                 <th className="text-caption font-medium uppercase opacity-60 py-3">Run</th>
                 <th className="text-caption font-medium uppercase opacity-60 py-3">Skill</th>
                 <th className="text-caption font-medium uppercase opacity-60 py-3">Inputs</th>
+                <th className="text-caption font-medium uppercase opacity-60 py-3">Real</th>
                 <th className="text-caption font-medium uppercase opacity-60 py-3">Status</th>
                 <th className="text-caption font-medium uppercase opacity-60 py-3">Progress</th>
                 <th className="text-caption font-medium uppercase opacity-60 py-3">Duration</th>
@@ -250,6 +251,20 @@ export default function RunsPage() {
                   <td className="py-3 text-caption font-mono">{run.id.slice(0, 14)}</td>
                   <td className="py-3 text-body-sm font-medium">{run.skillName ?? run.skillId}</td>
                   <td className="py-3 text-body-sm text-obsidian/70 tabular-nums">{run.totalInputs}</td>
+                  <td className="py-3">
+                    {(() => {
+                      const realCount = (run.actions ?? []).filter((a) => a.real).length;
+                      if (realCount === 0) return <span className="text-caption text-obsidian/40">—</span>;
+                      return (
+                        <span
+                          className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-mist-mint/40 text-[10px] font-bold text-obsidian/70"
+                          title={`${realCount} real headless Chromium action(s)`}
+                        >
+                          📸 {realCount}
+                        </span>
+                      );
+                    })()}
+                  </td>
                   <td className="py-3">
                     <FeatureTag variant={variantByStatus[run.status]}>
                       {run.status === "running" || run.status === "queued" ? "● " : ""}
