@@ -238,6 +238,13 @@ export function ComposerCard({
         msg: `Run ${ok.runId} dispatched. Agent driving headless browser.`,
       });
 
+      // Fire-and-forget Telegram notification. No-ops if the user
+      // hasn't configured a bot token. The run continues even if
+      // Telegram is down.
+      void import("@/lib/client/notify").then(({ notifyDispatch }) =>
+        notifyDispatch({ userId, runId: ok.runId, goal: slot.goal })
+      );
+
       onUpdate({
         runId: ok.runId,
         agentId: localAgent.id,

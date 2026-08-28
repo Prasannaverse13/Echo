@@ -12,6 +12,7 @@ import {
   type AgentRecord,
   type RunRecord,
 } from "@/lib/client/stores";
+import { stopRunSimulator } from "@/lib/client/run-simulator";
 import { downloadSkillMd } from "@/lib/client/skill-md";
 import { startRunSimulator } from "@/lib/client/run-simulator";
 import { startBrowserRunner } from "@/lib/client/browser-runner";
@@ -171,6 +172,26 @@ export default function RunDetailPage({
       console.error("Re-run failed:", err);
       setReRunning(false);
     }
+  };
+
+  /** Stop a running run: mark it cancelled, stop the simulator.
+   *  The browser-runner and run-simulator both check the status
+   *  each tick and stop when they see "cancelled". */
+  const handleStop = () => {
+    if (!run) return;
+    if (!window.confirm("Stop this run? The agent will be cancelled and any in-flight browser actions will be abandoned.")) {
+      return;
+    }
+    stopRunSimulator(run.id);
+    // Persist the cancelled status. The polling loop will see it
+    // on the next tick and the UI will reflect the change.
+    const cancelled: RunRecord = {
+      ...run,
+      status: "cancelled",
+      finishedAt: new Date().toISOString(),
+    };
+    saveRun(userId, cancelled);
+    setRun(cancelled);
   };
 
   if (!id) {
@@ -336,6 +357,16 @@ export default function RunDetailPage({
         >
           {reRunning ? "⟳ Re-running…" : "▶ Re-run"}
         </Button>
+        {isRunning && (
+          <Button
+            variant="outline-light"
+            size="md"
+            onClick={handleStop}
+            title="Mark this run as cancelled. The simulator + headless browser will stop on their next tick."
+          >
+            ⏹ Stop
+          </Button>
+        )}
       </div>
 
       {/* Per-input list */}

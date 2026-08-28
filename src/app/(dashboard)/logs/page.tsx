@@ -215,7 +215,7 @@ export default function LogsPage() {
         </FeatureCard>
         <FeatureCard surface="paper-white" padding="md" className="hairline">
           <p className="text-caption text-obsidian/50 mb-1">Total buffered</p>
-          <p className="text-heading-sm font-bold tabular-nums">{stats.todayCount.toLocaleString()}</p>
+          <p className="text-heading-sm font-bold tabular-nums">{logs.length.toLocaleString()}</p>
         </FeatureCard>
       </div>
     </div>
