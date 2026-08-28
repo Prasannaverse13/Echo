@@ -17,7 +17,8 @@
     "worker:once": "tsx src/worker/index.ts",
     "worker:bind": "powershell -ExecutionPolicy Bypass -File scripts/bind-subscription.ps1",
     "worker:deploy": "gcloud run deploy echo-worker --source . --region us-central1",
-    "vercel:set-google-client": "python vercel_set_client.py"
+    "vercel:set-google-client": "python vercel_set_client.py",
+    "eval:recorder": "tsx scripts/eval-recorder.ts"
   },
   "dependencies": {
     "@google-cloud/firestore": "^9.0.0",
