@@ -194,6 +194,15 @@ export default function RunDetailPage({
     setRun(cancelled);
   };
 
+  /** Copy a deep link to this run to the clipboard. */
+  const handleShare = () => {
+    if (typeof window === "undefined" || !run) return;
+    const url = `${window.location.origin}/runs/${run.id}`;
+    void navigator.clipboard
+      ?.writeText(url)
+      .catch(() => undefined);
+  };
+
   if (!id) {
     return (
       <div className="page-container py-10">
@@ -356,6 +365,14 @@ export default function RunDetailPage({
           title="Re-dispatch this same goal with a fresh runId"
         >
           {reRunning ? "⟳ Re-running…" : "▶ Re-run"}
+        </Button>
+        <Button
+          variant="outline-light"
+          size="md"
+          onClick={handleShare}
+          title="Copy a link to this run"
+        >
+          🔗 Share
         </Button>
         {isRunning && (
           <Button
