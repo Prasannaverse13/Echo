@@ -18,7 +18,7 @@
     "worker:bind": "powershell -ExecutionPolicy Bypass -File scripts/bind-subscription.ps1",
     "worker:deploy": "gcloud run deploy echo-worker --source . --region us-central1",
     "vercel:set-google-client": "python vercel_set_client.py",
-    "eval:recorder": "tsx scripts/eval-recorder.ts"
+    "eval:recorder": "dotenv -e .env.local -- tsx scripts/eval-recorder.ts"
   },
   "dependencies": {
     "@google-cloud/firestore": "^9.0.0",
@@ -39,6 +39,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
     "tailwindcss": "^4",

@@ -52,17 +52,30 @@ ${catalogueForPrompt()}
 - Keep what's essential ("submit one form per record"); drop what's incidental (the 3 particular records, exact window positions, timing).
 - State the generalization in plain language in the \`generalization\` field.
 
+## Dynamic values are tokens. Period.
+
+**The single most common mistake is leaving dynamic values hardcoded in step text.** A recording of "search LinkedIn for 'AI jobs', past 24 hours" MUST become a plan that references \`{{job_query}}\` and \`{{date_range}}\` — never the literal strings "AI jobs" or "Past 24 hours". A recording of "draft an email to jane@acme.com welcoming her as a new lead" MUST become a plan with \`{{recipient_email}}\` and \`{{lead_name}}\` tokens.
+
+Ask yourself for every concrete noun, name, URL, query, number, recipient, body of text, and date in your step text:
+
+> "Would a different execution of this skill plausibly use a DIFFERENT value here?"
+
+- **YES** (it would vary) → it MUST be a \`{{token}}\` referenced from \`values[]\`. Examples: search queries, dates/date ranges, recipient names/emails, subject lines, message bodies, threshold numbers, sheet names, account names, the URL of a page being scraped, the literal text being copied.
+- **NO** (genuinely fixed across every execution) → it can stay as a literal. Examples: the canonical API URL of a service the workflow always hits, the name of an internal staging environment, a constant transformation.
+
+When in doubt: **make it a token**. The user can always simplify later, but they cannot recover a token that you did not emit.
+
 ## Fixed values → tokens
 
-Some steps reference a literal that is the **same on every run** — a canonical URL, a sheet id, a constant. Pull each of those out into the plan's \`values\` as \`{ id, name, value }\`:
+For each token you emit, the plan's \`values\` entry has:
 
 - \`id\` — short snake_case key, e.g. \`backlog_url\`
 - \`name\` — human label shown on an editable pill in the review UI
-- \`value\` — the exact literal
+- \`value\` — the exact literal from the recording (or a placeholder if the recording didn't have one)
 
 Then **reference it from the step text by its \`{{id}}\` token** instead of writing the literal. The user edits any value in one place and it substitutes everywhere it's used when the skill is written.
 
-Only create a value for something **genuinely fixed**. If a target varies from run to run (e.g. "the most recent *.csv in ~/Downloads"), do NOT make it a value — write it as a plain step instruction telling the agent to locate it. Never over-pin to one machine's path just because the recording used it once.
+Only omit a value (use plain prose in the step) when the target is **truly dynamic at runtime** — e.g. "the most recent *.csv in ~/Downloads" or "the row the user is currently looking at". These should be a plain step instruction telling the agent to locate the value. Never over-pin to one machine's path just because the recording used it once.
 
 ## Prefer native tools (read the catalogue above)
 

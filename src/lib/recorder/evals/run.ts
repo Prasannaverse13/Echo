@@ -108,7 +108,16 @@ export async function scoreFixture(
   const parsed = parseSkillPlan(tryJson(result.text));
   if (!parsed.ok) {
     return {
-      score: { name: fixture.name, total: 0, max: 100, breakdown, notes: ["Plan shape invalid: " + parsed.issues.map((i) => i.path).join(", ")] },
+      score: {
+        name: fixture.name,
+        total: 0,
+        max: 100,
+        breakdown,
+        notes: [
+          "Plan shape invalid: " + parsed.issues.map((i) => `${i.path}: ${i.message}`).join("; "),
+          ...(process.env.EVAL_VERBOSE === "1" ? ["Raw: " + result.text.slice(0, 800)] : []),
+        ],
+      },
       plan: null,
       error: "Plan shape invalid",
     };
