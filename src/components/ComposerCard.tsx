@@ -371,30 +371,7 @@ export function ComposerCard({
       )}
 
       {/* Running / completed header */}
-      {showConsole && liveRun && (
-        <div className="space-y-1">
-          <p className="text-caption text-obsidian/60 line-clamp-1 italic">
-            "{slot.goal.slice(0, 60)}{slot.goal.length > 60 ? "…" : ""}"
-          </p>
-          <div className="flex items-center gap-2 text-caption">
-            <span className="font-mono text-obsidian/50 truncate">{liveRun.id.slice(0, 16)}</span>
-            <span className="text-obsidian/40">·</span>
-            <span className="text-obsidian/70 tabular-nums">{progress}%</span>
-            <span className="text-obsidian/40">·</span>
-            <span className="text-obsidian/70">
-              {liveRun.totalInputs} inputs
-            </span>
-          </div>
-          <div className="h-1.5 bg-iron/40 rounded-full overflow-hidden">
-            <div
-              className={`h-full transition-all duration-500 ${
-                isCompleted ? "bg-mist-mint" : "bg-obsidian"
-              }`}
-              style={{ width: `${Math.max(progress, isRunning ? 4 : 0)}%` }}
-            />
-          </div>
-        </div>
-      )}
+      {showConsole && liveRun && renderRunHeader(liveRun, progress, isRunning, isCompleted, slot.goal)}
 
       {/* Error */}
       {slot.error && (
@@ -438,6 +415,7 @@ export function ComposerCard({
               size="sm"
               onClick={dispatch}
               disabled={slot.dispatching}
+              data-shortcut="dispatch"
             >
               {slot.dispatching ? "⟳ Dispatching…" : "▶ Dispatch"}
             </Button>
@@ -471,4 +449,49 @@ function deriveAgentName(g: string): string {
   const first = g.split(/[.!?\n]/)[0].trim();
   const words = first.split(/\s+/).slice(0, 6).join(" ");
   return words.length > 50 ? words.slice(0, 47) + "..." : words || "Untitled agent";
+}
+
+function renderRunHeader(
+  liveRun: RunRecord,
+  progress: number,
+  isRunning: boolean,
+  isCompleted: boolean,
+  goal: string
+) {
+  const realCount = (liveRun.actions ?? []).filter((a) => a.real).length;
+  return (
+    <div className="space-y-1">
+      <p className="text-caption text-obsidian/60 line-clamp-1 italic">
+        "{goal.slice(0, 60)}{goal.length > 60 ? "…" : ""}"
+      </p>
+      <div className="flex items-center gap-2 text-caption flex-wrap">
+        <span className="font-mono text-obsidian/50 truncate">{liveRun.id.slice(0, 16)}</span>
+        <span className="text-obsidian/40">·</span>
+        <span className="text-obsidian/70 tabular-nums">{progress}%</span>
+        <span className="text-obsidian/40">·</span>
+        <span className="text-obsidian/70">
+          {liveRun.totalInputs} inputs
+        </span>
+        {realCount > 0 && (
+          <>
+            <span className="text-obsidian/40">·</span>
+            <span
+              className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-mist-mint/40 text-[10px] font-bold text-obsidian/70"
+              title={`${realCount} real headless Chromium action(s) so far`}
+            >
+              📸 {realCount} real
+            </span>
+          </>
+        )}
+      </div>
+      <div className="h-1.5 bg-iron/40 rounded-full overflow-hidden">
+        <div
+          className={`h-full transition-all duration-500 ${
+            isCompleted ? "bg-mist-mint" : "bg-obsidian"
+          }`}
+          style={{ width: `${Math.max(progress, isRunning ? 4 : 0)}%` }}
+        />
+      </div>
+    </div>
+  );
 }

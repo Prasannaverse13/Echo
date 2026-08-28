@@ -1,15 +1,21 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { FeatureCard, FeatureTag, Button } from "@/components/ui";
 import { BrowserConsole } from "@/components/BrowserConsole";
 import {
   getAgent,
   getUserId,
+  saveAgent,
+  saveRun,
   type AgentRecord,
   type RunRecord,
 } from "@/lib/client/stores";
 import { downloadSkillMd } from "@/lib/client/skill-md";
+import { startRunSimulator } from "@/lib/client/run-simulator";
+import { startBrowserRunner } from "@/lib/client/browser-runner";
+import { playCaptureChime } from "@/lib/client/client-helpers";
 
 const POLL_MS = 1500;
 
@@ -39,11 +45,15 @@ export default function RunDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const router = useRouter();
   const userId = React.useMemo(getUserId, []);
   const [run, setRun] = React.useState<RunRecord | null>(null);
   const [now, setNow] = React.useState(Date.now());
   const [id, setId] = React.useState<string>("");
   const [agent, setAgent] = React.useState<AgentRecord | null>(null);
+  const [reRunning, setReRunning] = React.useState(false);
+  const [realActionCount, setRealActionCount] = React.useState(0);
+  const lastRealCount = React.useRef(0);
 
   // Next.js 15 app router: params is a Promise. Resolve it client-side.
   React.useEffect(() => {
@@ -67,6 +77,14 @@ export default function RunDetailPage({
       if (fresh?.agentId) {
         setAgent(getAgent(userId, fresh.agentId) ?? null);
       }
+      // Count real actions and play the capture chime when the
+      // count goes up.
+      const realCount = (fresh?.actions ?? []).filter((a) => a.real).length;
+      if (realCount > lastRealCount.current) {
+        playCaptureChime();
+      }
+      lastRealCount.current = realCount;
+      setRealActionCount(realCount);
     };
     refresh();
     const interval = setInterval(refresh, POLL_MS);
@@ -79,6 +97,81 @@ export default function RunDetailPage({
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
+
+  /** Re-dispatch the same goal with a fresh runId. The current
+   *  page is left as a snapshot of the previous run. */
+  const handleReRun = async () => {
+    if (!run?.goal) return;
+    if (reRunning) return;
+    setReRunning(true);
+    try {
+      // Re-create the agent + run records so the new run links back
+      // to the same agent (or a fresh one) and the BrowserAction
+      // logs start empty.
+      const localAgent: AgentRecord = {
+        id: `agent_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        name: agent?.name ?? deriveAgentName(run.goal),
+        goal: run.goal,
+        subtasks: agent?.subtasks ?? [],
+        totalEstTime: agent?.totalEstTime ?? "10m",
+        totalEstCost: agent?.totalEstCost ?? "$0.18",
+        reasoning: agent?.reasoning ?? "",
+        status: "active",
+        createdAt: new Date().toISOString(),
+      };
+      saveAgent(userId, localAgent);
+
+      const res = await fetch("/api/agents/run-autonomous", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal: run.goal, inputCount: run.totalInputs ?? 5 }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        runId?: string;
+        error?: string;
+      };
+      if (!res.ok || !data.runId) {
+        throw new Error(data.error ?? `Re-run failed: ${res.status}`);
+      }
+
+      const newRun: RunRecord = {
+        id: data.runId,
+        skillId: localAgent.id,
+        skillName: localAgent.name,
+        agentId: localAgent.id,
+        goal: run.goal,
+        inputs: Array.from({ length: run.totalInputs ?? 5 }, (_, i) => ({
+          id: `input_${i + 1}`,
+          payload: { row: i + 1 },
+        })),
+        totalInputs: run.totalInputs ?? 5,
+        status: "running",
+        progress: 0,
+        startedAt: new Date().toISOString(),
+        gcp: "disabled",
+        message: "Re-dispatched from a previous run.",
+      };
+      saveRun(userId, newRun);
+
+      startRunSimulator({
+        userId,
+        runId: data.runId,
+        totalInputs: newRun.totalInputs,
+        goal: run.goal,
+      });
+      // Browser-runner pulls its own browserStops from the
+      // dispatch API; we don't have that here, but the simulator
+      // fills the action log so the user sees activity.
+      void newRun;
+
+      // Navigate to the new run's detail page.
+      router.push(`/runs/${data.runId}`);
+    } catch (err) {
+      console.error("Re-run failed:", err);
+      setReRunning(false);
+    }
+  };
 
   if (!id) {
     return (
@@ -137,7 +230,7 @@ export default function RunDetailPage({
             {run.skillName ?? run.skillId} · {run.totalInputs} inputs · {elapsed} elapsed
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <FeatureTag variant={variantByStatus[run.status]}>
             {isRunning ? "● " : ""}
             {run.status}
@@ -145,6 +238,14 @@ export default function RunDetailPage({
           {run.gcp && (
             <FeatureTag variant={run.gcp === "connected" ? "mist-mint" : "iron"}>
               GCP {run.gcp}
+            </FeatureTag>
+          )}
+          {/* Real-actions badge — the visual proof the headless
+              browser did real work. Updates as more real actions
+              stream in (each one plays the capture chime). */}
+          {realActionCount > 0 && (
+            <FeatureTag variant="wisteria">
+              📸 {realActionCount} real headless
             </FeatureTag>
           )}
         </div>
@@ -212,24 +313,30 @@ export default function RunDetailPage({
         </FeatureCard>
       )}
 
-      {run.agentId && (
-        <div className="mb-6 flex flex-wrap items-center gap-3">
+      <div className="mb-6 flex flex-wrap items-center gap-3">
+        {run.agentId && (
           <Button variant="outline-light" size="md" href={`/agents/${run.agentId}`}>
             View agent →
           </Button>
-          {/* skill.md export — available on every run, not just
-              completed ones, so the user can also save a partial
-              trace for debugging. */}
-          <Button
-            variant="light"
-            size="md"
-            onClick={() => downloadSkillMd(run, agent)}
-            title="Download a portable skill.md file containing the goal, plan, action log, and inline screenshots"
-          >
-            ↓ Download skill.md
-          </Button>
-        </div>
-      )}
+        )}
+        <Button
+          variant="light"
+          size="md"
+          onClick={() => downloadSkillMd(run, agent)}
+          title="Download a portable skill.md file containing the goal, plan, action log, and inline screenshots"
+        >
+          ↓ Download skill.md
+        </Button>
+        <Button
+          variant="light"
+          size="md"
+          onClick={handleReRun}
+          disabled={reRunning || isRunning}
+          title="Re-dispatch this same goal with a fresh runId"
+        >
+          {reRunning ? "⟳ Re-running…" : "▶ Re-run"}
+        </Button>
+      </div>
 
       {/* Per-input list */}
       <div>
@@ -265,4 +372,10 @@ export default function RunDetailPage({
       </div>
     </div>
   );
+}
+
+function deriveAgentName(g: string): string {
+  const first = g.split(/[.!?\n]/)[0].trim();
+  const words = first.split(/\s+/).slice(0, 6).join(" ");
+  return words.length > 50 ? words.slice(0, 47) + "..." : words || "Untitled agent";
 }

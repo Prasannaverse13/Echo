@@ -16,9 +16,20 @@
  * WebMCP tools target the currently-active slot (the one the user
  * last clicked into); the badge in the top-right of the page shows
  * which slot the agent is talking to.
+ *
+ * Demo mode: navigate to `/compose?demo=true` to auto-fill all
+ * empty slots with a different realistic goal, then auto-dispatch
+ * them in sequence. The screen recording flows itself.
+ *
+ * Keyboard shortcuts:
+ *   - ⌘/Ctrl + Enter  → dispatch the active composer (when in
+ *                       review phase)
+ *   - ⌘/Ctrl + N      → add a new composer
+ *   - Esc             → close the active composer (if more than 1)
  */
 
 import * as React from "react";
+import { useSearchParams } from "next/navigation";
 import { Button, FeatureTag, FeatureCard } from "@/components/ui";
 import {
   addComposerSlot,
@@ -30,18 +41,57 @@ import {
   setActiveSlot,
   updateComposerSlot,
   type ComposerState,
+  type ComposerSlot,
 } from "@/lib/client/stores";
 import { ComposerCard } from "@/components/ComposerCard";
 import { buildComposerTools } from "@/lib/webmcp/composer-tools";
 import { useWebMCPTools } from "@/lib/webmcp/use-webmcp";
+import { MOD } from "@/lib/client/client-helpers";
+import { SkillFileUpload } from "@/components/SkillFileUpload";
 
 const exampleGoal =
   "Get this week's new HubSpot leads, enrich each with LinkedIn, draft a personalized outreach email, and save the drafts in my Gmail drafts folder.";
 
+const DEMO_GOALS: string[] = [
+  "Enrich this week's HubSpot leads with LinkedIn profiles and save the enrichment data.",
+  "Draft a personalized outreach email for each enriched lead and save to Gmail drafts.",
+  "Post a daily summary of new leads and drafts to the #sales channel in Slack.",
+  "Append the agent's output to the Echo product roadmap page in Notion.",
+  "Sync today's Stripe subscription events into a Google Sheet for finance review.",
+  "Search Hacker News for top AI agent posts this week and bookmark the top 5.",
+  "Look up each lead's GitHub profile and add their top repos to the CRM record.",
+];
+
+const TEMPLATE_GOALS: Array<{ title: string; goal: string; tag: string }> = [
+  {
+    title: "Lead enrichment chain",
+    goal: exampleGoal,
+    tag: "HubSpot + LinkedIn + Gmail",
+  },
+  {
+    title: "Hacker News scout",
+    goal: "Search Hacker News for the top 5 stories about AI agents this week and bookmark them.",
+    tag: "Hacker News (no auth)",
+  },
+  {
+    title: "Customer health monitor",
+    goal: "Pull this week's Stripe usage for every paying customer and post a churn-risk alert to #customer-health on Slack for any account with a usage drop of 30% or more.",
+    tag: "Stripe + Slack",
+  },
+  {
+    title: "Content repurposing",
+    goal: "Take the latest blog post on echo.dev and turn it into 5 tweets, 1 LinkedIn post, and 1 newsletter blurb — save the drafts to Notion for review.",
+    tag: "Notion + Twitter + LinkedIn",
+  },
+];
+
 export default function ComposePage() {
   const userId = React.useMemo(getUserId, []);
+  const searchParams = useSearchParams();
+  const isDemo = searchParams?.get("demo") === "true";
   const [state, setState] = React.useState<ComposerState | null>(null);
   const [hydrated, setHydrated] = React.useState(false);
+  const [demoFired, setDemoFired] = React.useState(false);
 
   // Hydrate from localStorage. SSR + the very first client render
   // must agree, so we hydrate in an effect and re-render.
@@ -60,6 +110,20 @@ export default function ComposePage() {
     saveComposerState(userId, state);
   }, [hydrated, userId, state]);
 
+  // Demo mode: auto-fill all empty slots with a different goal and
+  // then auto-dispatch them one by one. Only fires once per session
+  // so reload doesn't re-dispatch.
+  React.useEffect(() => {
+    if (!isDemo || !hydrated || !state || demoFired) return;
+    setDemoFired(true);
+    const filled = state.slots.map((s, i) =>
+      s.phase === "input" && !s.goal
+        ? { ...s, goal: DEMO_GOALS[i % DEMO_GOALS.length] }
+        : s
+    );
+    setState({ ...state, slots: filled });
+  }, [isDemo, hydrated, state, demoFired]);
+
   const handleUpdate = React.useCallback(
     (slotId: string, patch: Parameters<typeof updateComposerSlot>[3]) => {
       setState((prev) => (prev ? updateComposerSlot(userId, prev, slotId, patch) : prev));
@@ -77,8 +141,6 @@ export default function ComposePage() {
         if (!prev) return prev;
         const slot = prev.slots.find((s) => s.id === slotId);
         if (!slot) return prev;
-        // Stop any background tickers for this slot's run before
-        // yanking the slot out of the grid.
         if (slot.runId) cancelSlotRun(userId, slot);
         return removeComposerSlot(userId, prev, slotId);
       });
@@ -97,25 +159,58 @@ export default function ComposePage() {
   const handleFillAll = React.useCallback(() => {
     setState((prev) => {
       if (!prev) return prev;
-      const goals = [
-        "Enrich this week's HubSpot leads with LinkedIn profiles and save the enrichment data.",
-        "Draft a personalized outreach email for each enriched lead and save to Gmail drafts.",
-        "Post a daily summary of new leads and drafts to the #sales channel in Slack.",
-        "Append the agent's output to the Echo product roadmap page in Notion.",
-        "Sync today's Stripe subscription events into a Google Sheet for finance review.",
-        "Search Hacker News for top AI agent posts this week and bookmark the top 5.",
-        "Look up each lead's GitHub profile and add their top repos to the CRM record.",
-      ];
       const next = { ...prev };
       next.slots = prev.slots.map((s, i) =>
         s.phase === "input" && !s.goal
-          ? { ...s, goal: goals[i % goals.length] }
+          ? { ...s, goal: DEMO_GOALS[i % DEMO_GOALS.length] }
           : s
       );
       saveComposerState(userId, next);
       return next;
     });
   }, [userId]);
+
+  const handleLoadTemplate = React.useCallback(
+    (goal: string) => {
+      setState((prev) => {
+        if (!prev) return prev;
+        const target = prev.activeSlotId
+          ? prev.slots.findIndex((s) => s.id === prev.activeSlotId)
+          : prev.slots.findIndex((s) => s.phase === "input" && !s.goal);
+        const idx = target >= 0 ? target : 0;
+        const next = { ...prev };
+        next.slots = prev.slots.map((s, i) =>
+          i === idx && s.phase === "input" ? { ...s, goal } : s
+        );
+        saveComposerState(userId, next);
+        return next;
+      });
+    },
+    [userId]
+  );
+
+  /** Pre-fill the active composer from a parsed skill.md. The
+   *  SkillFileUpload component does the parsing; we just apply
+   *  the result to whichever slot is active (or the first empty
+   *  input slot). */
+  const handleLoadSkill = React.useCallback(
+    (parsed: { name: string; description: string; goal: string }) => {
+      setState((prev) => {
+        if (!prev) return prev;
+        const targetIdx = prev.activeSlotId
+          ? prev.slots.findIndex((s) => s.id === prev.activeSlotId)
+          : prev.slots.findIndex((s) => s.phase === "input" && !s.goal);
+        const idx = targetIdx >= 0 ? targetIdx : 0;
+        const next = { ...prev };
+        next.slots = prev.slots.map((s, i) =>
+          i === idx ? { ...s, goal: parsed.goal, label: parsed.name } : s
+        );
+        saveComposerState(userId, next);
+        return next;
+      });
+    },
+    [userId]
+  );
 
   // WebMCP: register tools for the *active* slot so the in-browser
   // agent can talk to whichever composer the user is currently
@@ -133,10 +228,6 @@ export default function ComposePage() {
         phase: activeSlot?.phase ?? "input",
         runId: activeSlot?.runId ?? null,
         startPlanning: async () => {
-          // (the real implementation is in the card; this is just a
-          // WebMCP-facing shim that emits the same effect by clicking
-          // the active card's Compose button. The card owns the
-          // network call so we re-implement minimally here.)
           if (!activeSlot) return;
           const goalText = activeSlot.goal.trim() || exampleGoal;
           handleUpdate(activeSlot.id, { goal: goalText, phase: "planning", error: null });
@@ -165,21 +256,43 @@ export default function ComposePage() {
           }
         },
         dispatch: async () => {
-          // WebMCP dispatch — minimal version that mirrors the card's
-          // dispatch behavior at the top level. The card itself has
-          // the full flow; this is enough for the in-browser agent.
           if (!activeSlot?.plan) return;
           handleUpdate(activeSlot.id, { phase: "running", dispatching: true, error: null });
         },
       }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeSlot?.id, activeSlot?.goal, activeSlot?.phase, activeSlot?.runId, handleUpdate]
   );
   useWebMCPTools(composerTools);
 
+  // Global keyboard shortcuts.
+  React.useEffect(() => {
+    if (!state) return;
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      // ⌘/Ctrl + Enter → dispatch the active composer
+      if (mod && e.key === "Enter") {
+        e.preventDefault();
+        const btn = document.querySelector<HTMLButtonElement>(
+          "[data-shortcut=\"dispatch\"]"
+        );
+        btn?.click();
+      }
+      // ⌘/Ctrl + N → add new composer
+      if (mod && (e.key === "n" || e.key === "N")) {
+        e.preventDefault();
+        handleAdd();
+      }
+      // Esc → close active composer (if more than 1)
+      if (e.key === "Escape" && state.slots.length > 1 && state.activeSlotId) {
+        const ok = window.confirm("Close the active composer? Its run (if any) will be cancelled.");
+        if (ok) handleClose(state.activeSlotId);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [state, handleAdd, handleClose]);
+
   if (!state || !hydrated) {
-    // Render a placeholder skeleton so SSR and the first client
-    // paint agree. After hydration we replace with the real grid.
     return (
       <div className="page-container py-10">
         <div className="mb-8">
@@ -209,8 +322,10 @@ export default function ComposePage() {
           <p className="mt-3 text-body text-obsidian/70 max-w-2xl">
             Compose up to 4 agents at once. Each composer dispatches its
             own headless browser, runs in parallel, and streams its own
-            live progress. Use the crosshatch to close a composer, or
-            the + below to add a new one.
+            live progress.
+          </p>
+          <p className="mt-2 text-caption text-obsidian/50">
+            Shortcuts: {MOD}+Enter to dispatch · {MOD}+N to add composer · Esc to close
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -260,63 +375,47 @@ export default function ComposePage() {
             You closed the others — click + Add to bring more back.
           </span>
         )}
-        {state.slots.length > 1 && state.slots.length < 4 && (
-          <span className="text-caption text-obsidian/50">
-            Default grid is 4. Add as many as you need.
-          </span>
-        )}
       </div>
 
-      {/* Example cards (visible when all slots are still in input) */}
-      {state.slots.every((s) => s.phase === "input" && !s.goal) && (
-        <div className="mt-10">
-          <h2 className="text-heading-sm font-bold mb-3">Try one of these</h2>
-          <p className="text-body-sm text-obsidian/60 mb-4">
-            Click a card to load the goal into the active composer.
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {[
-              {
-                title: "Daily lead enrichment",
-                goal:
-                  "Get this week's new HubSpot leads, enrich each with LinkedIn, draft a personalized outreach email, and save the drafts in my Gmail drafts folder.",
-                tag: "HubSpot + LinkedIn + Gmail",
-              },
-              {
-                title: "Weekly content repurposing",
-                goal:
-                  "Take the latest blog post on echo.dev and turn it into 5 tweets, 1 LinkedIn post, and 1 newsletter blurb — save the drafts to Notion for review.",
-                tag: "Notion + Twitter + LinkedIn",
-              },
-              {
-                title: "Customer health monitor",
-                goal:
-                  "Pull this week's Stripe usage for every paying customer and post a churn-risk alert to #customer-health on Slack for any account with a usage drop of 30% or more.",
-                tag: "Stripe + Slack",
-              },
-            ].map((ex) => (
-              <button
-                key={ex.title}
-                onClick={() => {
-                  // Load into the active slot
-                  if (state.activeSlotId) {
-                    handleUpdate(state.activeSlotId, { goal: ex.goal });
-                  }
-                }}
-                className="text-left"
-              >
-                <FeatureCard surface="dusty-sky" padding="md" className="hover:shadow-md transition-shadow">
-                  <p className="text-caption font-medium uppercase opacity-60 mb-1">
-                    Example
-                  </p>
-                  <p className="text-body-sm font-bold mb-2">{ex.title}</p>
-                  <p className="text-caption opacity-70">{ex.tag}</p>
-                </FeatureCard>
-              </button>
-            ))}
-          </div>
+      {/* Load from skill.md — closes the loop with the
+          /agents/[id] "Download skill.md" button. Drop a previously
+          exported skill.md and its goal prefills the active
+          composer. */}
+      <div className="mt-6">
+        <SkillFileUpload onLoad={handleLoadSkill} />
+      </div>
+
+      {/* Templates row — always visible so a fresh user can see
+          example goals without having to close all their slots. */}
+      <div className="mt-10">
+        <div className="flex items-baseline justify-between mb-3">
+          <h2 className="text-heading-sm font-bold">Try one of these</h2>
+          <span className="text-caption text-obsidian/50">
+            Click to load into the active composer
+          </span>
         </div>
-      )}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          {TEMPLATE_GOALS.map((t) => (
+            <button
+              key={t.title}
+              onClick={() => handleLoadTemplate(t.goal)}
+              className="text-left"
+            >
+              <FeatureCard
+                surface="dusty-sky"
+                padding="md"
+                className="hover:shadow-md transition-shadow h-full"
+              >
+                <p className="text-caption font-medium uppercase opacity-60 mb-1">
+                  Example
+                </p>
+                <p className="text-body-sm font-bold mb-2">{t.title}</p>
+                <p className="text-caption opacity-70">{t.tag}</p>
+              </FeatureCard>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

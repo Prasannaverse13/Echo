@@ -41,6 +41,7 @@ import {
   updateRun,
   type BrowserAction,
 } from "./stores";
+import { playCaptureChime, playErrorChirp } from "./client-helpers";
 
 type ActionKind =
   | "click"
@@ -174,6 +175,7 @@ async function runStops(opts: RunnerOpts): Promise<void> {
 
       if (!data.ok) {
         // Whole script failed
+        playErrorChirp();
         const errAction: BrowserAction = {
           ts: new Date().toISOString(),
           kind: "think",
@@ -193,8 +195,11 @@ async function runStops(opts: RunnerOpts): Promise<void> {
 
       // Emit an extract action for the initial page load (the
       // "before" snapshot) so the user sees what the browser saw
-      // before any clicks.
+      // before any clicks. This is the headline moment — play the
+      // capture chime so the demo has an audio cue when the
+      // headless browser actually delivers a real screenshot.
       if (data.initialScreenshot) {
+        playCaptureChime();
         appendAction(userId, runId, {
           ts: new Date().toISOString(),
           kind: "extract",

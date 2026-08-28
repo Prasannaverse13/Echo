@@ -315,13 +315,23 @@ export default function AgentsPage() {
         })}
         {unified.length === 0 && (
           <FeatureCard surface="paper-white" padding="lg" className="hairline text-center">
-            <p className="text-body text-obsidian/60">
-              No agents yet. Go to{" "}
-              <Link href="/compose" className="underline">
-                Composer
-              </Link>{" "}
-              to dispatch one.
+            <p className="text-heading-sm font-bold mb-2">No agents yet</p>
+            <p className="text-body text-obsidian/60 mb-5">
+              Each composer dispatch creates a saved sub-agent you can re-dispatch,
+              link to a Trigger, or export as a portable <code className="font-mono">skill.md</code>.
             </p>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Link href="/compose">
+                <Button variant="light" size="md">
+                  ❖ Compose an agent
+                </Button>
+              </Link>
+              <Link href="/compose?demo=true">
+                <Button variant="outline-light" size="md">
+                  ▶ Run the demo
+                </Button>
+              </Link>
+            </div>
           </FeatureCard>
         )}
       </div>

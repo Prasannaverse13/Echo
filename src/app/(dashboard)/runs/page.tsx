@@ -196,11 +196,28 @@ export default function RunsPage() {
 
       {visible.length === 0 ? (
         <FeatureCard surface="paper-white" padding="lg" className="hairline text-center">
-          <p className="text-body text-obsidian/60">
-            {runs.length === 0
-              ? "No runs yet. Hit \u201cRun now\u201d on any skill, or compose a new agent in the Composer."
-              : "No runs match this filter."}
+          <p className="text-heading-sm font-bold mb-2">
+            {runs.length === 0 ? "No runs yet" : "No runs match this filter"}
           </p>
+          <p className="text-body text-obsidian/60 mb-5">
+            {runs.length === 0
+              ? "Dispatch your first agent from the Composer — it'll show up here with live progress and a screenshot from the real headless browser."
+              : "Try a different status filter, or clear the filter to see everything."}
+          </p>
+          {runs.length === 0 ? (
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button variant="light" size="md" href="/compose">
+                ❖ Compose an agent
+              </Button>
+              <Button variant="outline-light" size="md" href="/compose?demo=true">
+                ▶ Run the demo
+              </Button>
+            </div>
+          ) : (
+            <Button variant="outline-light" size="md" onClick={() => setFilter("all")}>
+              Show all runs
+            </Button>
+          )}
         </FeatureCard>
       ) : (
         <FeatureCard surface="paper-white" padding="md" className="hairline overflow-hidden">
