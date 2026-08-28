@@ -85,12 +85,13 @@ const statusMeta: Record<string, { color: "dusty-sky" | "wisteria" | "desert-cla
 export default function AgentDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const userId = React.useMemo(getUserId, []);
+  const userId = React.useMemo(() => getUserId(), []);
   const id = params?.id ?? "";
 
   const [hydrated, setHydrated] = React.useState(false);
   const [stored, setStored] = React.useState<AgentRecord | null>(null);
   const [runs, setRuns] = React.useState<RunRecord[]>([]);
+  const [reDispatching, setReDispatching] = React.useState(false);
 
   React.useEffect(() => {
     setStored(getAgent(userId, id) ?? null);
@@ -197,7 +198,6 @@ export default function AgentDetailPage() {
     downloadSkillPack(exportableRun, storedAgent);
   };
 
-  const [reDispatching, setReDispatching] = React.useState(false);
   const handleReDispatch = async () => {
     if (!isStored || !storedAgent?.goal) return;
     if (reDispatching) return;
