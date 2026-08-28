@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Button, FeatureTag, FeatureCard } from "@/components/ui";
 import { appendLog, getUserId, type SkillRecord, saveSkillToStore } from "@/lib/client/stores";
+import { downloadSkillFromRecord } from "@/lib/client/skill-md";
 
 type Phase = "idle" | "permission" | "recording" | "paused" | "uploading" | "learning" | "review" | "error";
 
@@ -763,6 +764,29 @@ export default function RecordPage() {
                 )}
                 {phase === "review" && (
                   <>
+                    <Button
+                      variant="outline-light"
+                      size="md"
+                      onClick={() => {
+                        downloadSkillFromRecord({
+                          name: skillName,
+                          description: skillDescription,
+                          intent: intent || undefined,
+                          triggers,
+                          integrations,
+                          steps,
+                          source: source ?? "recorder",
+                        });
+                        appendLog(userId, {
+                          level: "info",
+                          agent: "echo-recorder",
+                          msg: `Exported skill.md for "${skillName}"`,
+                        });
+                      }}
+                      title="Download a portable skill.md with the goal, procedure, rules, output schema, and validation"
+                    >
+                      ↓ skill.md
+                    </Button>
                     <Button variant="outline-light" size="md" onClick={reset}>
                       ↻ Re-record
                     </Button>

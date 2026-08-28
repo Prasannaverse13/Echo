@@ -765,6 +765,223 @@ export function downloadSkillMd(
   triggerDownload(content, fileName(run, agent, ""));
 }
 
+// ---------------------------------------------------------------------------
+// Recorded-skill generator (used by the /record page after the video
+// is reconstructed into steps by Gemini)
+// ---------------------------------------------------------------------------
+
+interface RecordedStep {
+  num: number;
+  title: string;
+  detail: string;
+  at: string;
+}
+
+interface RecordedSkill {
+  name: string;
+  description: string;
+  intent?: string;
+  triggers?: string[];
+  integrations?: string[];
+  steps: RecordedStep[];
+  source?: "aistudio" | "vertex" | "mock" | "manual" | "recorder" | null;
+  /** Optional reference back to a video file (Blob or URL). */
+  videoRef?: { name: string; sizeBytes: number; durationSec: number };
+}
+
+/**
+ * Generate an operational skill.md for a skill that was created
+ * from a video recording (rather than from a live agent run). The
+ * format mirrors generateSkillMd so the file is consumable by any
+ * agent that knows the spec. The "Procedure" section is filled
+ * from the reconstructed steps; the "Visual evidence" section
+ * embeds a note that the source is a screen recording.
+ */
+export function generateSkillFromRecord(skill: RecordedSkill): string {
+  const skillName = skill.name || "Recorded skill";
+  const goal = skill.description || skill.intent || "Workflow recorded from screen capture.";
+  const triggers = skill.triggers ?? extractTriggers(goal);
+  const antiTriggers = extractAntiTriggers(goal);
+  const steps = skill.steps ?? [];
+
+  const lines: string[] = [];
+  lines.push("---");
+  lines.push(`name: ${skillName}`);
+  lines.push(
+    `description: ${goal.replace(/"/g, '\\"').replace(/\n/g, " ")}`
+  );
+  lines.push(`source: recorded-screen-capture`);
+  if (skill.source) lines.push(`source_model: ${skill.source}`);
+  if (skill.intent) lines.push(`intent: ${skill.intent.replace(/"/g, '\\"').replace(/\n/g, " ")}`);
+  if (skill.integrations?.length) {
+    lines.push(`integrations: ${skill.integrations.map((i) => `"${i}"`).join(", ")}`);
+  }
+  lines.push(`created: ${new Date().toISOString()}`);
+  lines.push("---");
+  lines.push("");
+
+  lines.push(`# Skill: ${skillName}`);
+  lines.push("");
+
+  lines.push("## Description");
+  lines.push("");
+  lines.push(goal);
+  lines.push("");
+  if (skill.intent && skill.intent !== goal) {
+    lines.push(`*Why this exists:* ${skill.intent}`);
+    lines.push("");
+  }
+
+  lines.push("## When to Use");
+  lines.push("");
+  lines.push("Use this skill when:");
+  for (const t of triggers) lines.push(`- ${t}`);
+  lines.push("");
+  lines.push("Do not use this skill when:");
+  for (const t of antiTriggers) lines.push(`- ${t}`);
+  lines.push("");
+
+  // Recorded-skill inputs: most screen-recorded workflows don't
+  // take explicit structured inputs — they're triggered by the
+  // user performing the same flow. Surface this honestly in the
+  // spec.
+  lines.push("## Inputs");
+  lines.push("");
+  lines.push(
+    "This skill was reconstructed from a screen recording and does not declare structured inputs. If you need to run it on different data, capture a new recording with that data as input, or wire it to a Trigger / Schedule that supplies the inputs as environment variables."
+  );
+  lines.push("");
+
+  lines.push("## Procedure");
+  lines.push("");
+  if (steps.length === 0) {
+    lines.push("_No steps were reconstructed from the recording. Re-record or add steps manually._");
+  } else {
+    lines.push("Follow these steps in order. Each step was reconstructed from the screen recording by Gemini and may need light editing before publishing:");
+    lines.push("");
+    steps.forEach((s, i) => {
+      lines.push(`${i + 1}. **${s.title}**`);
+      if (s.detail) {
+        // Wrap long detail lines
+        for (const dline of s.detail.split(/\n+/)) {
+          lines.push(`   ${dline}`);
+        }
+      }
+      if (s.at) lines.push(`   _At:_ \`${s.at}\``);
+      lines.push("");
+    });
+  }
+
+  lines.push("## Output");
+  lines.push("");
+  lines.push("The output of this skill is whatever the user-visible side effects of the procedure are — files saved, messages sent, records updated. Define this concretely when you wire the skill to a Trigger:");
+  lines.push("");
+  lines.push("```json");
+  lines.push(
+    JSON.stringify(
+      {
+        success: true,
+        skill: skillName,
+        procedure_steps: steps.length,
+        side_effects: [
+          "(define these based on what the recording actually did)",
+        ],
+      },
+      null,
+      2
+    )
+  );
+  lines.push("```");
+  lines.push("");
+
+  // Source provenance — note the recording so future agents know
+  // where the procedure came from.
+  lines.push("## Source");
+  lines.push("");
+  lines.push("This skill was reconstructed from a screen recording:");
+  lines.push("");
+  lines.push(
+    `- **Capture method:** \`navigator.mediaDevices.getDisplayMedia\` + \`MediaRecorder\` (webm/vp9)`
+  );
+  if (skill.videoRef) {
+    lines.push(
+      `- **Recording:** \`${skill.videoRef.name}\` (${(skill.videoRef.sizeBytes / 1024).toFixed(1)} KB, ${skill.videoRef.durationSec}s)`
+    );
+  }
+  if (skill.source) {
+    lines.push(`- **Reconstruction model:** \`${skill.source}\``);
+  }
+  lines.push("- **Reconstruction pipeline:** video → frames → Gemini vision → steps");
+  lines.push("");
+
+  lines.push("## Rules");
+  lines.push("");
+  lines.push("- Always run the procedure steps in order.");
+  lines.push("- Do not invent steps that weren't in the original recording — add them to a separate `## Follow-ups` section and review with a human before publishing.");
+  lines.push("- Before relying on this skill in production, re-record the workflow on a clean account and verify each step against the expected side effect.");
+  lines.push("- If a step references a specific UI element (button text, field name), keep that text exact — UI wording is a brittle contract.");
+  lines.push("- Never include credentials, session cookies, or PII in the output.");
+  lines.push("");
+
+  lines.push("## Error Handling");
+  lines.push("");
+  lines.push("If any step can't complete because the UI has changed:");
+  lines.push("");
+  lines.push("```json");
+  lines.push(
+    JSON.stringify(
+      {
+        success: false,
+        skill: skillName,
+        error: {
+          code: "UI_DRIFT",
+          message:
+            "The UI for one or more steps has changed since this skill was recorded. Re-record against the current UI or patch the affected step.",
+        },
+      },
+      null,
+      2
+    )
+  );
+  lines.push("```");
+  lines.push("");
+
+  lines.push("## Validation");
+  lines.push("");
+  lines.push("Before publishing this skill, verify:");
+  lines.push("");
+  lines.push("- [ ] Every step has a non-empty title and detail.");
+  lines.push("- [ ] The `triggers` list matches real conditions that should fire this skill.");
+  lines.push("- [ ] The procedure has been dry-run end-to-end at least once.");
+  lines.push("- [ ] No credentials or PII are present in any step's detail.");
+  lines.push("- [ ] If the skill was reconstructed from a real recording, the recording is saved alongside this file for audit.");
+  lines.push("");
+
+  lines.push("## Version");
+  lines.push("");
+  lines.push(`Version: 1.0.0  `);
+  lines.push(`Source: Echo Recorder — reconstructed from screen capture  `);
+  lines.push(`Created: ${new Date().toISOString()}`);
+  lines.push("");
+
+  return lines.join("\n");
+}
+
+/**
+ * Trigger a browser download of the skill.md for a recorded skill.
+ * Pure browser API. The file is named after the skill.
+ */
+export function downloadSkillFromRecord(skill: RecordedSkill): void {
+  if (typeof window === "undefined") return;
+  const content = generateSkillFromRecord(skill);
+  const slugName = (skill.name || "echo-skill")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "echo-skill";
+  triggerDownload(content, `${slugName}.md`);
+}
+
 /**
  * Trigger a download of the per-subtask skill pack. Builds a
  * manifest in addition to one skill.md per subtask and triggers
