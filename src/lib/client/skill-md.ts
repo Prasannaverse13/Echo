@@ -31,6 +31,8 @@
  */
 
 import type { AgentRecord, RunRecord, SkillRecord } from "./stores";
+import { renderValues, tokenIds, unresolvedTokens } from "@/lib/recorder/tokens";
+import type { BuiltSkill, SkillValue } from "@/lib/recorder/builder-schema";
 
 interface BrowserAction {
   ts: string;
@@ -1159,4 +1161,123 @@ function triggerDownload(content: string, filename: string): void {
   a.click();
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ---------------------------------------------------------------------------
+// BuiltSkill (new pipeline) → SKILL.md
+// ---------------------------------------------------------------------------
+
+/**
+ * Render a `BuiltSkill` (the new pipeline's final artifact) to a SKILL.md
+ * that matches the Microsoft Skill Recorder / Echo portable format:
+ *
+ *   ---
+ *   name: <kebab>
+ *   description: "<trigger-oriented sentence>"
+ *   allowed-tools:
+ *     - <tool id>
+ *   ---
+ *
+ *   <body — values substituted, all `{{id}}` tokens resolved>
+ *
+ * The body comes from `BuiltSkill.body` (rendered by the Builder's
+ * `renderPlanBody`) with every `{{id}}` replaced by its value. Unresolved
+ * tokens are LEFT in the body and surfaced as a validation note in a
+ * follow-ups section so the user can fix them in a future build.
+ */
+export function generateSkillFromBuilt(built: BuiltSkill): string {
+  const lines: string[] = ["---"];
+  lines.push(`name: ${built.name}`);
+  // Use JSON.stringify to produce a valid YAML double-quoted scalar — keeps
+  // colons / commas / apostrophes in the description safe.
+  lines.push(`description: ${JSON.stringify(built.description.trim())}`);
+  if (built.allowedTools && built.allowedTools.length > 0) {
+    lines.push("allowed-tools:");
+    for (const t of built.allowedTools) lines.push(`  - ${t}`);
+  }
+  lines.push("---");
+  lines.push("");
+
+  const body = renderValues(built.body, built.plan.values);
+
+  // Surface unresolved tokens as a follow-ups block so the user can fix them.
+  const unresolved = unresolvedTokens(built.body, built.plan.values);
+  if (unresolved.length > 0) {
+    const fixed = body.trimEnd() +
+      "\n\n## Follow-ups\n\n" +
+      "- The following `{{id}}` tokens are referenced in the body but have no matching value:\n" +
+      unresolved.map((id) => `  - \`{{${id}}}\``).join("\n") +
+      "\n";
+    lines.push(fixed);
+  } else {
+    lines.push(body);
+  }
+
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+}
+
+/**
+ * Trigger a browser download of the SKILL.md for a `BuiltSkill`. The file
+ * is named after the skill so multiple exports don't collide.
+ */
+export function downloadSkillFromBuilt(built: BuiltSkill): void {
+  if (typeof window === "undefined") return;
+  const content = generateSkillFromBuilt(built);
+  const slugName = (built.plan.title || built.name || "echo-skill")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "echo-skill";
+  triggerDownload(content, `${slugName}.md`);
+}
+
+/**
+ * Best-effort: prefer the new `BuiltSkill` format if the record has it;
+ * otherwise fall back to the legacy `RecordedSkill` generator. The
+ * per-skill detail page uses this so newly-saved skills get the new
+ * format and legacy / backfilled skills get the old one.
+ */
+export function generateSkillFromRecordSmart(record: SkillRecord): string {
+  if (record.built && record.built.version === 1) {
+    return generateSkillFromBuilt(record.built as BuiltSkill);
+  }
+  return generateSkillFromRecord({
+    name: record.name,
+    description: record.description,
+    intent: record.intent,
+    triggers: record.triggers,
+    integrations: record.integrations,
+    steps: (record.steps ?? []).map((s) => ({
+      num: s.num,
+      title: s.title,
+      detail: s.detail,
+      at: s.at,
+    })),
+    source: record.source,
+  });
+}
+
+/**
+ * Browser download for either pipeline (smart routing). Used by the
+ * per-skill detail page.
+ */
+export function downloadSkillFromRecordSmart(record: SkillRecord): void {
+  if (record.built && record.built.version === 1) {
+    downloadSkillFromBuilt(record.built as BuiltSkill);
+    return;
+  }
+  downloadSkillFromRecord({
+    name: record.name,
+    description: record.description,
+    intent: record.intent,
+    triggers: record.triggers,
+    integrations: record.integrations,
+    steps: (record.steps ?? []).map((s) => ({
+      num: s.num,
+      title: s.title,
+      detail: s.detail,
+      at: s.at,
+    })),
+    source: record.source,
+  });
 }

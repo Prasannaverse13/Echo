@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isGcpAvailable, writeDoc } from "@/lib/gcp";
 import { generateJson, generateJsonWithImages } from "@/lib/genai";
+import {
+  parseAnalysisSubmission,
+  toAnalysis,
+  type Analysis,
+  type AnalysisSubmission,
+} from "@/lib/recorder/analysis-schema";
+import { describerFirstPassUserMessage, describerSystemPrompt } from "@/lib/recorder/prompts/describer";
+import { serializeTimelineForDescriber, type SessionBundle } from "@/lib/recorder/events";
 
 // Vercel serverless function timeout. Default is 10s; Gemini video analysis
 // can take 15-30s depending on length. Bump to 60s on Hobby (the max).
@@ -10,145 +18,109 @@ export const dynamic = "force-dynamic";
 /**
  * POST /api/skills/reconstruct
  *
- * Body: { frameCount: number, durationSec: number }
+ * Body: {
+ *   sessionId: string,
+ *   video?: string,        // data: URL or raw base64
+ *   videoMimeType?: string,
+ *   durationSec: number,
+ *   frameCount?: number,
+ *   frames?: string[],     // fallback if no video
+ *   events?: SessionBundle,
+ *   narration?: { text: string, segments?: Array<{ atMs: number; text: string }> }
+ * }
  *
- * In a full implementation, the client would POST the actual frame blobs here
- * (multipart/form-data). For the hackathon demo, we synthesize a realistic
- * skill structure that Echo would have extracted from screen capture frames.
+ * First-pass Describer call. Watches the video (or reads the frames + events
+ * + narration) and returns the full `AnalysisSubmission` shape that
+ * Microsoft's Skill Recorder's Describer produces:
  *
- * Calls Gemini via the unified client (`@/lib/genai`) which tries Vertex
- * AI first (uses the GCP project's billing) then AI Studio (uses the
- * API key). Falls back to a mock when neither is available so the demo
- * always works.
+ *   { title, intent, intentConfidence, intentRationale, steps[] }
  *
- * When GCP is enabled, the reconstructed skill is persisted to Firestore
- * (collection: `skills`) so the Composer and Skill Library pages can read
- * it back. Failures to write to GCP are logged but never block the
- * response — the demo must keep working without GCP configured.
+ * The client wraps this into a full `Analysis` (with revision + approved flag
+ * set to false) and stores it next to the legacy `description` / `intent` /
+ * `steps` fields so existing UI keeps working.
+ *
+ * Returns: { ok, sessionId, analysis, analysisSubmission, source, ... }
+ *
+ * Falls back to the legacy mock only if both Gemini attempts fail AND there
+ * are no frames / video to analyze. With real media, the user gets a real
+ * 502 if Gemini can't be reached.
  */
 
-interface ReconstructedSkill {
-  suggestedName: string;
-  suggestedDescription: string;
-  intent: string;
-  steps: { num: number; title: string; detail: string; at: string }[];
-  triggers: string[];
-  integrations: string[];
-}
-
-const RECONSTRUCTION_PROMPT = `You are Echo's vision analysis engine. The user just recorded a screen capture of themselves performing a workflow. Based on the captured frames, reconstruct the workflow as a structured skill.
-
-Return ONLY valid JSON in this exact shape:
-{
-  "suggestedName": "short, action-oriented (e.g. 'PDF → Sheets')",
-  "suggestedDescription": "one sentence, plain language",
-  "intent": "one paragraph describing what this skill accomplishes and when it should run",
-  "steps": [
-    { "num": 1, "title": "Step title", "detail": "What happens in this step", "at": "MM:SS" }
-  ],
-  "triggers": ["when this skill should run"],
-  "integrations": ["apps/services involved"]
-}
-
-Keep steps between 3-7. Be specific and actionable. Use realistic MM:SS timestamps based on a 60-90 second recording.`;
+const REQ_MODELS = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"] as const;
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const {
+    sessionId,
     frameCount = 0,
     durationSec = 0,
     frames,
     video,
     videoMimeType,
+    events,
+    narration,
   } = body as {
+    sessionId?: string;
     frameCount?: number;
     durationSec?: number;
     frames?: string[];
     video?: string;
     videoMimeType?: string;
+    events?: SessionBundle;
+    narration?: { text: string; segments?: Array<{ atMs: number; text: string }> };
   };
 
+  const sid = (sessionId && typeof sessionId === "string" ? sessionId : `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`); // eslint-disable-line @typescript-eslint/no-unused-vars
+  const hasVideo = typeof video === "string" && video.length > 0;
+  const hasFrames = Array.isArray(frames) && frames.length > 0;
+  const hasNarration = !!(narration && typeof narration.text === "string" && narration.text.trim().length > 0);
+  const hasEvents = !!(events && Array.isArray(events.events) && events.events.length > 0);
+
+  // Build the system prompt (and figure out which inputs to attach).
+  const systemPrompt = describerSystemPrompt({ hasVideo, hasFrames, hasNarration, hasEvents });
+  const userText = describerFirstPassUserMessage({
+    durationSec,
+    frameCount: hasFrames ? frames!.length : frameCount,
+    hasNarration,
+    narrationPreview: narration?.text,
+  });
+  const userTextWithTimeline =
+    hasEvents
+      ? userText + "\n\n## Event timeline\n\n" + serializeTimelineForDescriber(events!) + "\n"
+      : userText;
+
   // ---- Video path (preferred) ----
-  // The client records the entire screen as a webm and posts the full
-  // blob. Gemini 1.5+ supports inline video input and can describe what
-  // happens across the whole clip, including motion, scrolling, and
-  // hover state — none of which a frame-sampling approach can capture.
-  if (typeof video === "string" && video.length > 0) {
-    // Browser-recorded webm data URLs look like:
-    //   data:video/webm;codecs=vp9,opus;base64,XXX
-    // The MIME type can have parameters (e.g. `;codecs=vp9,opus`) BEFORE
-    // the `;base64,` marker. A naive `^data:([^;]+);base64,(.*)$` regex
-    // would fail to match (because `[^;]+` stops at the first `;` and
-    // then expects `;base64,`), and the whole "data:..." string would
-    // be sent as the base64 payload — which AI Studio then tries to
-    // decode and rejects with HTTP 400 "Base64 decoding failed for
-    // 'data:video/webm;codecs=vp9,opus;base64,'".
-    //
-    // Find the first `;base64,` marker, split the prefix into
-    // "data:" + MIME-with-params, and only send the suffix as base64.
-    // Then strip any codec parameter so the MIME we hand to Gemini is
-    // a clean type/subtype (e.g. "video/webm") — the @google/genai
-    // SDK does not understand the `;codecs=...` syntax.
-    const base64Idx = video.indexOf(";base64,");
-    let videoData: { mimeType: string; data: string };
-    if (video.startsWith("data:") && base64Idx > 5) {
-      const rawMime = video.slice(5, base64Idx); // e.g. "video/webm;codecs=vp9,opus"
-      const baseType = rawMime.split(";")[0].trim().toLowerCase();
-      videoData = {
-        mimeType: baseType || videoMimeType || "video/webm",
-        data: video.slice(base64Idx + ";base64,".length),
-      };
-    } else if (video.startsWith("data:") && video.includes(",")) {
-      // URL-encoded (non-base64) data URI fallback — shouldn't happen
-      // for our client but handle it defensively.
-      const commaIdx = video.indexOf(",");
-      const rawMime = video.slice(5, commaIdx);
-      const baseType = rawMime.split(";")[0].trim().toLowerCase();
-      videoData = {
-        mimeType: baseType || videoMimeType || "video/webm",
-        data: video.slice(commaIdx + 1),
-      };
-    } else {
-      videoData = { mimeType: videoMimeType || "video/webm", data: video };
-    }
-
-    const prompt = `${RECONSTRUCTION_PROMPT}\n\nThe attached file is a ${durationSec || "?"}-second screen recording of a workflow the user just performed. Watch the whole video carefully and extract the ordered steps, the intent, the right name, and the integrations involved. Be specific about what the user clicked, typed, and where the data went.`;
-
+  if (hasVideo) {
+    const videoData = parseDataUrl(video!, videoMimeType);
     const result = await generateJsonWithImages({
-      model: "gemini-3.5-flash",
-      prompt,
+      model: REQ_MODELS[0],
+      prompt: systemPrompt + "\n\n" + userTextWithTimeline,
       temperature: 0.4,
-      images: [
-        { mimeType: videoData.mimeType, data: videoData.data },
-      ],
+      images: [{ mimeType: videoData.mimeType, data: videoData.data }],
     });
     if (result?.text) {
-      try {
-        const parsed = JSON.parse(result.text) as ReconstructedSkill;
-        writeDoc(
-          "skills",
-          undefined,
-          parsed as unknown as Record<string, unknown>
-        ).catch(() => undefined);
+      const parsed = parseAnalysisSubmission(tryJson(result.text));
+      if (parsed.ok) {
+        const analysis: Analysis = toAnalysis(sid, 1, parsed.value, []);
+        await persist(analysis);
         return NextResponse.json({
           ok: true,
+          sessionId: sid,
           source: result.source,
-          frameCount: 0,
           videoSeconds: durationSec,
-          videoMimeType: videoData.mimeType,
-          ...parsed,
+          analysis,
+          analysisSubmission: parsed.value,
         });
-      } catch (err) {
-        console.error("[reconstruct] Gemini video parse failed:", err);
-        return NextResponse.json(
-          {
-            ok: false,
-            error:
-              "Gemini watched the video but returned a non-JSON response. Try re-recording, or fill the skill in by hand.",
-          },
-          { status: 502 }
-        );
       }
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Gemini watched the video but returned a non-Describer-shaped response. Try re-recording, or fill the skill in by hand.",
+          issues: parsed.issues,
+        },
+        { status: 502 }
+      );
     }
     return NextResponse.json(
       {
@@ -161,65 +133,40 @@ export async function POST(req: NextRequest) {
   }
 
   // ---- Frame path (legacy / fallback) ----
-  // If we got real frames, send them to Gemini as actual images.
-  // Use the same `;base64,` search as the video path so we tolerate
-  // any MIME-type parameters a future client might add.
-  const realFrames = Array.isArray(frames)
-    ? frames
-        .filter((f): f is string => typeof f === "string" && f.length > 0)
-        .map((f) => {
-          const b64Idx = f.indexOf(";base64,");
-          if (f.startsWith("data:") && b64Idx > 5) {
-            const baseType = f.slice(5, b64Idx).split(";")[0].trim().toLowerCase();
-            return { mimeType: baseType || "image/jpeg", data: f.slice(b64Idx + ";base64,".length) };
-          }
-          // Accept both "data:image/jpeg;base64,XXX" and bare "XXX" inputs.
-          const m = /^data:([^;,]+);base64,(.*)$/.exec(f);
-          if (m) return { mimeType: m[1], data: m[2] };
-          return { mimeType: "image/jpeg", data: f };
-        })
-    : [];
+  const realFrames = (Array.isArray(frames) ? frames : [])
+    .filter((f): f is string => typeof f === "string" && f.length > 0)
+    .map((f) => parseDataUrl(f, "image/jpeg"));
 
-  const prompt = `${RECONSTRUCTION_PROMPT}\n\nThe recording captured ${realFrames.length || frameCount} frames over ${durationSec} seconds. ${
-    realFrames.length > 0
-      ? "The images are attached in chronological order. Analyze them to reconstruct the workflow the user actually performed on their screen."
-      : "The user demonstrated a workflow on their screen (no frames are attached, so infer a plausible workflow from the metadata alone)."
-  }`;
-
-  // Strict multimodal path when we have real frames. If Gemini fails, the
-  // route surfaces a 502 so the client can show a real error and let the
-  // user type the skill manually. We do NOT silently fall back to a mock
-  // when the user has provided real screen-capture data.
   if (realFrames.length > 0) {
     const result = await generateJsonWithImages({
-      model: "gemini-3.5-flash",
-      prompt,
+      model: REQ_MODELS[0],
+      prompt: systemPrompt + "\n\n" + userTextWithTimeline,
       temperature: 0.4,
       images: realFrames,
     });
     if (result?.text) {
-      try {
-        const parsed = JSON.parse(result.text) as ReconstructedSkill;
-        writeDoc("skills", undefined, parsed as unknown as Record<string, unknown>).catch(
-          () => undefined
-        );
+      const parsed = parseAnalysisSubmission(tryJson(result.text));
+      if (parsed.ok) {
+        const analysis: Analysis = toAnalysis(sid, 1, parsed.value, []);
+        await persist(analysis);
         return NextResponse.json({
           ok: true,
+          sessionId: sid,
           source: result.source,
           frameCount: realFrames.length,
-          ...parsed,
+          analysis,
+          analysisSubmission: parsed.value,
         });
-      } catch (err) {
-        console.error("[reconstruct] Gemini multimodal parse failed:", err);
-        return NextResponse.json(
-          {
-            ok: false,
-            error:
-              "Gemini returned a non-JSON response. The model saw your frames but couldn't extract structured steps. Try re-recording with a clearer screen, or fill the skill in by hand.",
-          },
-          { status: 502 }
-        );
       }
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Gemini returned a non-Describer-shaped response. The model saw your frames but couldn't extract a structured analysis. Try re-recording with a clearer screen, or fill the skill in by hand.",
+          issues: parsed.issues,
+        },
+        { status: 502 }
+      );
     }
     return NextResponse.json(
       {
@@ -231,99 +178,96 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Text-only fallback (no video, no frames). Gemini has no actual media
-  // to look at here, so this is effectively a no-op — the prompt alone is
-  // not enough to reconstruct a workflow. We keep it so the endpoint
-  // still returns *something* for old clients.
-  const result = await generateJson({
-    model: "gemini-3.5-flash",
-    prompt,
-    temperature: 0.4,
-  });
-  if (result?.text) {
-    try {
-      const parsed = JSON.parse(result.text) as ReconstructedSkill;
-      writeDoc("skills", undefined, parsed as unknown as Record<string, unknown>).catch(
-        () => undefined
-      );
-      return NextResponse.json({
-        ok: true,
-        source: result.source,
-        frameCount: 0,
-        warning: "no_frames_provided",
-        ...parsed,
-      });
-    } catch (err) {
-      console.error("[reconstruct] Gemini response parse failed, falling back to mock:", err);
+  // ---- Text-only fallback (no video, no frames, optional events + narration) ----
+  if (hasEvents || hasNarration) {
+    const result = await generateJson({
+      model: REQ_MODELS[0],
+      prompt: systemPrompt + "\n\n" + userTextWithTimeline,
+      temperature: 0.4,
+    });
+    if (result?.text) {
+      const parsed = parseAnalysisSubmission(tryJson(result.text));
+      if (parsed.ok) {
+        const analysis: Analysis = toAnalysis(sid, 1, parsed.value, []);
+        await persist(analysis);
+        return NextResponse.json({
+          ok: true,
+          sessionId: sid,
+          source: result.source,
+          analysis,
+          analysisSubmission: parsed.value,
+        });
+      }
     }
   }
 
-  // Fallback: realistic mock that demonstrates the full product flow
-  const mock: ReconstructedSkill = {
-    suggestedName: "PDF → Sheets",
-    suggestedDescription:
-      "Extracts tabular data from new PDFs in Drive and appends it as rows to a Google Sheet.",
-    intent:
-      "When a new PDF lands in a watched Google Drive folder, read the document, identify the table or line items, extract the values, and append a new row to a configured Google Sheet — with a Slack ping when done.",
+  // ---- Last-resort mock (no real media at all). Keeps the demo flow alive
+  //      for clients that haven't supplied anything. ----
+  const mock: AnalysisSubmission = {
+    title: "Recorded workflow",
+    intent: "User recorded a workflow (no media attached — using a placeholder analysis).",
+    intentConfidence: "low",
+    intentRationale: "No video, frames, events, or narration were attached. This is a placeholder so the review UI can render; the user should re-record or fill the skill in by hand.",
     steps: [
       {
-        num: 1,
-        title: "Detect new PDF in Drive/Invoices",
-        detail:
-          "Watch the configured Drive folder for new PDF uploads. When a new file appears, download it for processing.",
-        at: "00:00",
-      },
-      {
-        num: 2,
-        title: "Extract tabular data from PDF",
-        detail:
-          "Use Gemini Vision to identify and extract line items, totals, vendor info, and dates from the document.",
-        at: "00:14",
-      },
-      {
-        num: 3,
-        title: "Map fields to sheet columns",
-        detail:
-          "Match extracted fields to the column headers in the destination sheet. Flag any missing or low-confidence fields for review.",
-        at: "00:32",
-      },
-      {
-        num: 4,
-        title: "Append new row to Google Sheet",
-        detail:
-          "Add a row to the configured Google Sheet with the mapped values, preserving existing data.",
-        at: "00:48",
-      },
-      {
-        num: 5,
-        title: "Notify team via Slack",
-        detail:
-          "Post a message to the configured Slack channel with the new row summary and a link back to the source PDF.",
-        at: "01:02",
+        id: "s1",
+        title: "Open the source app or page",
+        detail: "Open the application or page required for the task.",
+        apps: [],
+        evidence: [],
+        confidence: "low",
       },
     ],
-    triggers: [
-      "New file in Drive/Invoices folder",
-      "Manual: run with file upload",
-      "Schedule: daily at 9am (batch all new files)",
-    ],
-    integrations: ["Google Drive", "Google Sheets", "Slack"],
   };
-
-  // Simulate a tiny bit of latency so the UI's "Reconstructing..." state is visible
-  await new Promise((r) => setTimeout(r, 400));
-
-  // Best-effort persist to Firestore (non-blocking)
-  writeDoc(
-    "skills",
-    undefined,
-    mock as unknown as Record<string, unknown>
-  ).catch(() => undefined);
+  const analysis: Analysis = toAnalysis(sid, 1, mock, []);
+  await persist(analysis);
 
   return NextResponse.json({
     ok: true,
+    sessionId: sid,
     source: "mock",
     gcp: isGcpAvailable() ? "connected" : "disabled",
-    ...mock,
+    analysis,
+    analysisSubmission: mock,
   });
+}
+
+// ---- helpers ----
+
+function parseDataUrl(s: string, fallbackMime: string | undefined): { mimeType: string; data: string } {
+  const safeFallback = fallbackMime ?? "application/octet-stream";
+  if (s.startsWith("data:")) {
+    const b64Idx = s.indexOf(";base64,");
+    if (b64Idx > 5) {
+      const rawMime = s.slice(5, b64Idx);
+      const baseType = rawMime.split(";")[0].trim().toLowerCase();
+      return { mimeType: baseType || safeFallback, data: s.slice(b64Idx + ";base64,".length) };
+    }
+    const commaIdx = s.indexOf(",");
+    if (commaIdx > 0) {
+      const rawMime = s.slice(5, commaIdx);
+      const baseType = rawMime.split(";")[0].trim().toLowerCase();
+      return { mimeType: baseType || safeFallback, data: s.slice(commaIdx + 1) };
+    }
+  }
+  return { mimeType: safeFallback, data: s };
+}
+
+function tryJson(s: string): unknown {
+  const t = s.trim();
+  if (t.startsWith("```")) {
+    return JSON.parse(t.replace(/^```[a-z]*\n?/i, "").replace(/```\s*$/, "").trim());
+  }
+  return JSON.parse(t);
+}
+
+async function persist(analysis: Analysis): Promise<void> {
+  // Best-effort Firestore persist. Failures never block the response.
+  if (isGcpAvailable()) {
+    writeDoc(
+      "skill_analyses",
+      undefined,
+      analysis as unknown as Record<string, unknown>
+    ).catch(() => undefined);
+  }
 }

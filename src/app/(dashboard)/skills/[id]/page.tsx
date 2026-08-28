@@ -10,7 +10,7 @@ import {
   listSkills,
   type SkillRecord,
 } from "@/lib/client/stores";
-import { downloadSkillFromSaved } from "@/lib/client/skill-md";
+import { downloadSkillFromSaved, downloadSkillFromRecordSmart } from "@/lib/client/skill-md";
 
 type Step = { num: number; title: string; detail: string; at?: string };
 
@@ -380,7 +380,10 @@ export default function SkillDetailPage() {
             size="md"
             onClick={() => {
               try {
-                downloadSkillFromSaved(state.record);
+                // Smart router: prefer the new BuiltSkill format if the
+                // record has one; fall back to the legacy RecordedSkill
+                // generator for backfilled / pre-pipeline skills.
+                downloadSkillFromRecordSmart(state.record as Parameters<typeof downloadSkillFromRecordSmart>[0]);
                 appendLog(getUserId(), {
                   level: "info",
                   agent: "echo-skills",

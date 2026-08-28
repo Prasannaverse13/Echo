@@ -12,6 +12,8 @@
  * Storage keys are namespaced so multiple Echo tabs / users don't collide.
  */
 
+import { migrateSkillRecord } from "@/lib/recorder/migrate";
+
 const NS = (userId: string, key: string) => `echo.${userId}.${key}`;
 
 export interface BrowserAction {
@@ -97,6 +99,21 @@ export interface SkillRecord {
   intent?: string;
   triggers?: string[];
   integrations?: string[];
+  /**
+   * The Describer agent's full output for skills produced by the new
+   * Record → SKILL.md pipeline. Backfilled on load for legacy records so
+   * the analysis review UI has something to render. See
+   * `src/lib/recorder/analysis-schema.ts` for the shape.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  analysis?: any;
+  /**
+   * The Builder agent's output for skills produced by the new pipeline.
+   * The SKILL.md is rendered from this. See
+   * `src/lib/recorder/builder-schema.ts`.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  built?: any;
 }
 
 export interface AgentRecord {
@@ -271,7 +288,12 @@ export function deleteAgent(userId: string, id: string) {
 const SKILLS_KEY = "skills";
 
 export function listSkills(userId: string): SkillRecord[] {
-  return readArray<SkillRecord>(NS(userId, SKILLS_KEY));
+  const raw = readArray<SkillRecord>(NS(userId, SKILLS_KEY));
+  // Backfill legacy records with the new `analysis` / `built` fields.
+  // `migrate.ts` is leaf-importable (no dep on stores), so this is safe.
+  return raw
+    .map((r) => migrateSkillRecord(r))
+    .filter((s) => !!s && !!s.id);
 }
 
 export function saveSkillToStore(userId: string, skill: SkillRecord) {

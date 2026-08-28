@@ -4,8 +4,15 @@ import * as React from "react";
 import { Button, FeatureTag, FeatureCard } from "@/components/ui";
 import { appendLog, getUserId, type SkillRecord, saveSkillToStore } from "@/lib/client/stores";
 import { downloadSkillFromRecord } from "@/lib/client/skill-md";
+import { AnalysisReviewPanel } from "@/components/recorder/AnalysisReviewPanel";
+import { PlanReviewPanel } from "@/components/recorder/PlanReviewPanel";
+import { useRecorderEvents } from "@/lib/recorder/useRecorderEvents";
+import { useNarrationCapture } from "@/lib/recorder/useNarrationCapture";
+import type { Analysis, FeedbackEntry } from "@/lib/recorder/analysis-schema";
+import type { BuiltSkill, SkillPlan } from "@/lib/recorder/builder-schema";
+import type { SessionBundle } from "@/lib/recorder/events";
 
-type Phase = "idle" | "permission" | "recording" | "paused" | "uploading" | "learning" | "review" | "error";
+type Phase = "idle" | "permission" | "recording" | "paused" | "uploading" | "learning" | "analysis_review" | "plan_review" | "review" | "error";
 
 interface ReconstructedStep {
   num: number;
@@ -27,6 +34,19 @@ export default function RecordPage() {
   const [triggers, setTriggers] = React.useState<string[]>([]);
   const [integrations, setIntegrations] = React.useState<string[]>([]);
   const [source, setSource] = React.useState<"aistudio" | "vertex" | "mock" | null>(null);
+
+  // ---- New pipeline state ----
+  const [sessionId, setSessionId] = React.useState<string>("");
+  const [analysis, setAnalysis] = React.useState<Analysis | null>(null);
+  const [plan, setPlan] = React.useState<SkillPlan | null>(null);
+  const [built, setBuilt] = React.useState<BuiltSkill | null>(null);
+  const [reAnalyzing, setReAnalyzing] = React.useState(false);
+  const [revising, setRevising] = React.useState(false);
+  const [narrationEnabled, setNarrationEnabled] = React.useState(false);
+  const [transcript, setTranscript] = React.useState<{ text: string; segments: Array<{ atMs: number; text: string }> } | null>(null);
+  const [transcribing, setTranscribing] = React.useState(false);
+  const eventCapture = useRecorderEvents({ active: phase === "recording", enableClipboard: false });
+  const narration = useNarrationCapture({ active: phase === "recording" && narrationEnabled });
 
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
@@ -477,29 +497,73 @@ export default function RecordPage() {
 
     setPhase("uploading");
     setError(null);
+
+    // Stop event capture + narration (they tied to phase === "recording").
+    const events = eventCapture.stop();
+    // Narration is a separate state; we'll grab the audio after the next
+    // render (when the hook has flushed).
+
+    // We need to wait one tick for the narration hook to finalize the
+    // audio blob. Use a microtask + a short poll so we don't burn the
+    // Vercel function budget.
+    let narrationAudio: Blob | null = narration.audio;
+    if (narrationEnabled) {
+      for (let i = 0; i < 20 && !narrationAudio; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        narrationAudio = narration.audio;
+      }
+    }
+
+    // Transcribe the narration in parallel with the upload (saves time).
+    let transcriptRes: { text: string; segments: Array<{ atMs: number; text: string }> } | null = null;
+    if (narrationAudio && narrationAudio.size > 0) {
+      try {
+        setTranscribing(true);
+        const tRes = await fetch("/api/skills/transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            audio: await blobToDataUrl(narrationAudio),
+            mimeType: narrationAudio.type || "audio/webm",
+          }),
+        });
+        if (tRes.ok) {
+          const tj = await tRes.json();
+          if (tj.ok && tj.text) {
+            transcriptRes = { text: tj.text, segments: tj.segments ?? [] };
+            setTranscript(transcriptRes);
+          }
+        }
+      } catch (e) {
+        console.warn("[record] transcribe failed (non-fatal):", e);
+      } finally {
+        setTranscribing(false);
+      }
+    }
+
     try {
       setPhase("learning");
+      const reqBody: Record<string, unknown> = {
+        sessionId: events.session.id || `sess_${Date.now()}`,
+        durationSec: elapsed,
+        events,
+      };
+      if (transcriptRes) {
+        reqBody.narration = { text: transcriptRes.text, segments: transcriptRes.segments };
+      }
+      if (videoBlob) {
+        reqBody.video = await blobToDataUrl(videoBlob);
+        reqBody.videoMimeType = videoBlob.type || "video/webm";
+      } else {
+        reqBody.frames = await blobsToDataUrls(
+          sampleEvenly(frameBlobsRef.current, 24)
+        );
+      }
+
       const res = await fetch("/api/skills/reconstruct", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          videoBlob
-            ? {
-                durationSec: elapsed,
-                video: await blobToDataUrl(videoBlob),
-                videoMimeType: videoBlob.type || "video/webm",
-                // Keep the frame path as a backup channel for clients
-                // without MediaRecorder. Backend prefers `video` if set.
-                frames: [],
-              }
-            : {
-                frameCount: frameBlobsRef.current.length,
-                durationSec: elapsed,
-                frames: await blobsToDataUrls(
-                  sampleEvenly(frameBlobsRef.current, 24)
-                ),
-              }
-        ),
+        body: JSON.stringify(reqBody),
       });
 
       if (!res.ok) {
@@ -510,6 +574,23 @@ export default function RecordPage() {
       }
 
       const data = await res.json();
+
+      // New pipeline returns the full Analysis.
+      if (data.analysis) {
+        const a = data.analysis as Analysis;
+        setAnalysis(a);
+        setSessionId(a.sessionId);
+        setSource((data.source as "aistudio" | "vertex" | "mock" | undefined) ?? null);
+        // Seed the legacy fields so the existing save flow keeps working.
+        setSteps(a.steps.map((s, i) => ({ num: i + 1, title: s.title, detail: s.detail, at: "" })));
+        setSkillName(a.title);
+        setSkillDescription(a.intent);
+        setIntent(a.intent);
+        setPhase("analysis_review");
+        return;
+      }
+
+      // Legacy fallback (mock with no media).
       const incomingSteps: ReconstructedStep[] = Array.isArray(data.steps)
         ? data.steps.map((s: { num?: number; title?: string; detail?: string; at?: string }, i: number) => ({
             num: s.num ?? i + 1,
@@ -621,6 +702,11 @@ export default function RecordPage() {
       intent: intent || undefined,
       triggers,
       integrations,
+      // New pipeline outputs (when present).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      analysis: analysis ?? undefined as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      built: built ?? undefined as any,
     } satisfies SkillRecord;
   };
 
@@ -676,6 +762,127 @@ export default function RecordPage() {
   };
 
   const canSaveManual = skillName.trim().length > 0 && !saving;
+
+  // ---- New pipeline handlers ----
+  const handleReAnalyze = async (feedback: { overall?: string; steps: Array<{ stepId: string; note: string }> }) => {
+    if (!analysis) return;
+    setReAnalyzing(true);
+    setError(null);
+    try {
+      // For now, re-analyze without re-sending media (Gemini has the
+      // previous analysis in context, and that's enough for a targeted
+      // revision). A future iteration could re-send the video too.
+      const res = await fetch("/api/skills/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          previousAnalysis: analysis,
+          feedback,
+        }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody?.error || `Re-analysis failed: HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      if (data.analysis) {
+        setAnalysis(data.analysis as Analysis);
+        setSteps(
+          (data.analysis as Analysis).steps.map((s, i) => ({
+            num: i + 1,
+            title: s.title,
+            detail: s.detail,
+            at: "",
+          }))
+        );
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Re-analysis failed");
+    } finally {
+      setReAnalyzing(false);
+    }
+  };
+
+  const handleApproveAnalysis = async () => {
+    if (!analysis) return;
+    setRevising(true);
+    setError(null);
+    try {
+      // Mark the analysis as approved locally — the API doesn't need
+      // another round-trip for this.
+      const approved: Analysis = { ...analysis, approved: true, approvedAt: new Date().toISOString() };
+      setAnalysis(approved);
+
+      // Kick off the Builder.
+      const res = await fetch("/api/skills/build", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysis: approved }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody?.error || `Build failed: HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      if (data.plan) {
+        setPlan(data.plan as SkillPlan);
+        setPhase("plan_review");
+      } else {
+        throw new Error("Build returned no plan");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Build failed");
+    } finally {
+      setRevising(false);
+    }
+  };
+
+  const handleRevisePlan = async (feedback: string) => {
+    if (!analysis || !plan) return;
+    setRevising(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/skills/build", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysis, previousPlan: plan, feedback }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody?.error || `Revise failed: HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      if (data.plan) {
+        setPlan(data.plan as SkillPlan);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Revise failed");
+    } finally {
+      setRevising(false);
+    }
+  };
+
+  const handleApprovePlan = (b: BuiltSkill) => {
+    setBuilt(b);
+    // Wire the built back into the legacy fields so the existing save flow
+    // saves it. Then jump to the legacy review screen which already
+    // shows the steps and lets the user name/describe the skill.
+    setSteps(
+      b.plan.steps.map((s, i) => ({
+        num: i + 1,
+        title: s.title,
+        detail: s.text,
+        at: "",
+      }))
+    );
+    setSkillName(b.plan.title);
+    setSkillDescription(b.plan.description);
+    setIntent(b.plan.description);
+    setTriggers([]);
+    setIntegrations(b.plan.allowedTools);
+    setPhase("review");
+  };
 
   const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
   const ss = String(elapsed % 60).padStart(2, "0");
@@ -735,6 +942,8 @@ export default function RecordPage() {
                         · {frames > 0
                           ? `${(frames * 30 / 1024).toFixed(1)} MB recorded`
                           : "recording…"}
+                        {eventCapture.count() > 0 ? ` · ${eventCapture.count()} events` : ""}
+                        {narration.recording ? " · 🎙 on" : ""}
                       </span>
                     )}
                   </p>
@@ -742,13 +951,27 @@ export default function RecordPage() {
               </div>
               <div className="flex gap-2">
                 {phase === "idle" && (
-                  <Button
-                    variant="light"
-                    size="md"
-                    onClick={startRecording}
-                  >
-                    ◉ Start recording
-                  </Button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setNarrationEnabled((v) => !v)}
+                      className={`text-caption px-3 py-2 rounded-full border transition-colors ${
+                        narrationEnabled
+                          ? "bg-obsidian text-paper-white border-obsidian"
+                          : "bg-paper-white text-obsidian border-iron hover:border-obsidian"
+                      }`}
+                      title="Also record your voice narration. Echo will transcribe it and use it as the most direct statement of intent."
+                    >
+                      🎙 {narrationEnabled ? "Mic on" : "Add narration"}
+                    </button>
+                    <Button
+                      variant="light"
+                      size="md"
+                      onClick={startRecording}
+                    >
+                      ◉ Start recording
+                    </Button>
+                  </>
                 )}
                 {(phase === "permission" ||
                   phase === "uploading" ||
@@ -874,6 +1097,27 @@ export default function RecordPage() {
           </FeatureCard>
 
           {/* Review & approve panel — full step-by-step with editing */}
+          {phase === "analysis_review" && analysis && (
+            <AnalysisReviewPanel
+              analysis={analysis}
+              onChange={setAnalysis}
+              onApprove={handleApproveAnalysis}
+              onReAnalyze={handleReAnalyze}
+              reAnalyzing={reAnalyzing}
+              source={source}
+            />
+          )}
+
+          {phase === "plan_review" && plan && (
+            <PlanReviewPanel
+              plan={plan}
+              onChange={setPlan}
+              onApprove={handleApprovePlan}
+              onRevise={handleRevisePlan}
+              revising={revising}
+            />
+          )}
+
           {phase === "review" && (
             <div className="space-y-4">
               {/* Header summary */}
@@ -893,6 +1137,14 @@ export default function RecordPage() {
                       <p className="mt-2 text-caption text-obsidian/50">
                         Analyzed by Gemini ({source}). Steps below are editable
                         until you save.
+                      </p>
+                    )}
+                    {analysis && (
+                      <p className="mt-1 text-caption text-obsidian/50">
+                        ✓ Analysis approved (revision {analysis.revision})
+                        {built
+                          ? ` · ✓ Plan built (${built.plan.steps.length} generalized steps, ${built.plan.values.length} fixed values)`
+                          : ""}
                       </p>
                     )}
                   </div>
