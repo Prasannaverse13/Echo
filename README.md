@@ -471,6 +471,80 @@ The runtime service account is the default Cloud Run compute SA — it already h
 
 ---
 
-## 10. License
+## 10. Testing
+
+Echo ships with a 4-layer test surface so anyone can verify the project works end-to-end without GCP credentials:
+
+### 1. Smoke tests (no API keys, no GCP — runs in CI)
+
+```bash
+pnpm install
+pnpm smoke                # 9 API tests: /api/skills, /api/agents, /api/integrations
+pnpm smoke:fallback       # mock-fallback path: every AI call + GCP write has a deterministic mock
+pnpm smoke:worker         # worker boot, /healthz, SIGTERM graceful-shutdown
+pnpm smoke:auth           # page-render check for the full 17-page surface
+pnpm smoke:agent          # the autonomous agent end-to-end (with mocks)
+```
+
+All 5 smoke suites pass in mock-fallback mode (`GCP_ENABLED=false`, no `GEMINI_API_KEY`). Run them in <60s.
+
+### 2. Recorder eval (the Builder quality gate)
+
+```bash
+# Requires GEMINI_API_KEY in .env.local (or env)
+pnpm run eval:recorder
+```
+
+Runs 6 fixture recordings through the real Describer + Builder pipeline and scores each on:
+- tokenization (30 pts) — every expected `{{id}}` token present
+- no-forbidden-phrases (20 pts) — no hardcoded literals from the recording
+- tool picks (20 pts) — correct tool id from the catalogue
+- step count (10 pts) — at least `minSteps` steps
+- generalization (10 pts) — generalization line present
+- browser-kind (10 pts) — `expectBrowser` honored
+
+Default `MIN_SCORE=60`; exits non-zero if average is below the gate. Set `EVAL_VERBOSE=1` to print the raw LLM response on parse failures.
+
+### 3. Page-render smoke (the user surface)
+
+```bash
+pnpm install && pnpm dev
+# Open http://localhost:3000 and click through:
+# /             landing + sign in
+# /record       recorder with narration toggle
+# /compose?demo=true   pre-fills 4 composer slots
+# /skills       library (6 demo skills + any saved)
+# /agents       agent manager (6 demo + any saved)
+# /runs         run history
+# /logs         live event stream
+```
+
+All pages should load with **zero console errors** and no React warnings. The dev server uses Turbopack, so cold start is <2s.
+
+### 4. End-to-end with real Gemini (requires `GEMINI_API_KEY`)
+
+```bash
+# .env.local
+GEMINI_API_KEY=your_key_here
+
+pnpm install && pnpm dev
+# 1. /record → click Start recording → do anything on screen for 10s → Stop
+# 2. Wait ~5s → land on analysis review with Gemini's reconstructed steps
+# 3. Click Approve & build → wait ~5s → land on plan review with `{{id}}` tokens
+# 4. Click Download .md → get a portable skill file
+# 5. /compose?demo=true → click Compose on all 4 → click Dispatch
+# 6. Watch the runs page stream real headless Chromium screenshots
+```
+
+A full recording + build + dispatch round-trip takes ~30-60s end-to-end on a fresh project.
+
+### Expected output
+
+- All 5 smoke suites: ✅ pass
+- `pnpm run eval:recorder`: ≥60% (current: 64%)
+- All 17 pages: render with zero console errors
+- End-to-end with real Gemini: 1 saved skill + 1 dispatched run visible in the library
+
+## 11. License
 
 MIT. Built for the All Things Agentic Hackathon.
