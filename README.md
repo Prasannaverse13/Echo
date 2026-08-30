@@ -34,7 +34,7 @@ flowchart TB
     end
 
     subgraph GCP["Google Cloud (project: echo-hackathon-2026)"]
-        Gemini["Vertex AI<br/>gemini-3.5-flash → 3-flash<br/>→ 2.5-flash → 2.5-flash-lite"]
+        Gemini["Vertex AI<br/>gemini-3.5-flash → 3-flash<br/>→ 3.5-flash → 3.5-flash-lite"]
         AIStudio["AI Studio<br/>gemini-3.5-flash<br/>(public Gemini API)"]
         ADK["ADK Agent · src/lib/agents/echo-agent.ts<br/>LlmAgent + tool calling loop<br/>AsyncGenerator of AgentAction"]
         FS[("Firestore (nam5 / us-central1)<br/>skills · agents · runs · id · events")]
@@ -99,7 +99,7 @@ client                              Next.js route                Google Cloud
 
 | Devpost requirement | Where it lives in Echo |
 |---|---|
-| **Gemini 3.5+ via Gemini API or Vertex AI** | `PREFERRED_MODEL = "gemini-3.5-flash"` (`src/lib/genai.ts:30`). Ordered fallback: AI Studio `gemini-3.5-flash` → `gemini-3-flash` → Vertex AI `gemini-2.5-flash` → `gemini-2.5-flash-lite`. |
+| **Gemini 3.5+ via Gemini API or Vertex AI** | `PREFERRED_MODEL = "gemini-3.5-flash"` (`src/lib/genai.ts:30`). Ordered fallback: AI Studio `gemini-3.5-flash` → `gemini-3.5 flash` → Vertex AI `gemini-3.5-flash` → `gemini-3.5-flash-lite`. |
 | **≥ 1 Google Agent Framework (ADK / GenAI / Antigravity / GenKit)** | ADK-style `LlmAgent` in `src/lib/agents/echo-agent.ts` — Gemini + tool-calling loop, yields `AsyncGenerator<AgentAction>` for streaming. |
 | **≥ 1 Google Cloud infra service** | **4 wired**: Cloud Firestore (`skills`/`agents`/`runs`), Cloud Pub/Sub (`echo-runs`), Vertex AI (ADK agent + fallback), Cloud Run (multi-stage Dockerfile + `cloudbuild.yaml`). |
 | **Working webapp** | Next.js 16 (App Router) + React 19 + Tailwind v4 — 17 pages, real screen capture, 4 real API routes, all 200 OK. |
