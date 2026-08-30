@@ -2,7 +2,6 @@
 
 > A **Taskmaster** agent that watches you perform a workflow on screen once, reconstructs it as a structured *skill* using Gemini 3.5 Flash, composes multi-skill plans from a plain-English goal, and fans them out to run across thousands of inputs in parallel on Google Cloud Run.
 
-Built for the **All Things Agentic Hackathon** (Sep 1, 2026, $180k prize pool). Live: **[echo-one-liard.vercel.app](https://echo-one-liard.vercel.app)** · Repo: **[github.com/Prasannaverse13/Echo](https://github.com/Prasannaverse13/Echo)**.
 
 ---
 
