@@ -45,6 +45,9 @@ import {
 } from "@/lib/client/stores";
 import { ComposerCard } from "@/components/ComposerCard";
 import { buildComposerTools } from "@/lib/webmcp/composer-tools";
+import { buildSkillsTools } from "@/lib/webmcp/skills-tools";
+import { buildRunsTools } from "@/lib/webmcp/runs-tools";
+import { buildAgentsTools } from "@/lib/webmcp/agents-tools";
 import { useWebMCPTools } from "@/lib/webmcp/use-webmcp";
 import { MOD } from "@/lib/client/client-helpers";
 import { SkillFileUpload } from "@/components/SkillFileUpload";
@@ -263,6 +266,21 @@ export default function ComposePage() {
     [activeSlot?.id, activeSlot?.goal, activeSlot?.phase, activeSlot?.runId, handleUpdate]
   );
   useWebMCPTools(composerTools);
+
+  // WebMCP: also expose the saved-skills, runs, and agents libraries on
+  // /compose so an in-browser agent can do the full library → compose →
+  // dispatch flow without leaving the page. Combined with the composer
+  // tools above + the 5 global tools from AppShell, /compose now exposes
+  // the full 29-tool WebMCP surface (5 global + 6 composer + 7 skills
+  // + 5 runs + 6 agents). All tool names are unique across files, so
+  // there's no registration collision — every tool lands in
+  // `document.modelContext` the moment this page mounts.
+  const composeSkillsTools = React.useMemo(() => buildSkillsTools(), []);
+  const composeRunsTools = React.useMemo(() => buildRunsTools(), []);
+  const composeAgentsTools = React.useMemo(() => buildAgentsTools(), []);
+  useWebMCPTools(composeSkillsTools);
+  useWebMCPTools(composeRunsTools);
+  useWebMCPTools(composeAgentsTools);
 
   // Global keyboard shortcuts.
   React.useEffect(() => {
