@@ -64,3 +64,5 @@ build-out.log
 tsc-out.log
 echo_build.log
 echo_build_err.log
+
+.env*

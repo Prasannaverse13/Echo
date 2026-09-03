@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Button, FeatureTag, FeatureCard } from "@/components/ui";
 import { listSkills, type SkillRecord } from "@/lib/client/stores";
+import { buildSkillsTools } from "@/lib/webmcp/skills-tools";
+import { useWebMCPTools } from "@/lib/webmcp/use-webmcp";
 
 type DemoSkill = {
   id: string;
@@ -211,6 +213,12 @@ export default function SkillsPage() {
   );
   const avgSuccess =
     lifetimeRuns > 0 ? Math.round((successSum / lifetimeRuns) * 10) / 10 : 0;
+
+  // WebMCP: expose the saved-skills library to in-browser agents.
+  // Mounted on /skills so any visiting agent can list, search, read,
+  // and dispatch a saved skill while the user is on this page.
+  const skillsTools = useMemo(() => buildSkillsTools(), []);
+  useWebMCPTools(skillsTools);
 
   return (
     <div className="page-container py-10">

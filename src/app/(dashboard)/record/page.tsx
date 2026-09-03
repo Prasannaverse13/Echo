@@ -8,6 +8,8 @@ import { AnalysisReviewPanel } from "@/components/recorder/AnalysisReviewPanel";
 import { PlanReviewPanel } from "@/components/recorder/PlanReviewPanel";
 import { useRecorderEvents } from "@/lib/recorder/useRecorderEvents";
 import { useNarrationCapture } from "@/lib/recorder/useNarrationCapture";
+import { buildSkillsTools } from "@/lib/webmcp/skills-tools";
+import { useWebMCPTools } from "@/lib/webmcp/use-webmcp";
 import type { Analysis, FeedbackEntry } from "@/lib/recorder/analysis-schema";
 import type { BuiltSkill, SkillPlan } from "@/lib/recorder/builder-schema";
 import type { SessionBundle } from "@/lib/recorder/events";
@@ -661,6 +663,15 @@ export default function RecordPage() {
 
   const [saving, setSaving] = React.useState(false);
   const [manualStepsRaw, setManualStepsRaw] = React.useState("");
+
+  // WebMCP: also expose the saved-skills library on /record so an
+  // in-browser agent can list existing skills, fetch their SKILL.md,
+  // or dispatch a saved one while the user is on the record page.
+  // Recording itself is UI-bound (MediaRecorder requires explicit user
+  // grant), but the agent can still answer "is there a skill that
+  // already does this?" while the user is mid-recording.
+  const recordSkillsTools = React.useMemo(() => buildSkillsTools(), []);
+  useWebMCPTools(recordSkillsTools);
 
   const buildManualSkill = (): SkillRecord | null => {
     const name = skillName.trim();
