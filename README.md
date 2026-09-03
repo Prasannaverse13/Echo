@@ -166,7 +166,7 @@ The "Continue with Google" button on `/login` and `/signup` is a **real Google I
 
    The script reads the project ID from `.vercel/project.json` and is idempotent (it PATCHes an existing `NEXT_PUBLIC_GOOGLE_CLIENT_ID` rather than duplicating it).
 
-For the All Things Agentic submission, the pre-wired client ID is:
+For the bundled demo OAuth client, the pre-wired client ID is:
 `431018085923-skdv940r6dm240at7l8lf2ei37le8571.apps.googleusercontent.com` (GCP project `echo-hackathon-2026`).
 
 When `NEXT_PUBLIC_GOOGLE_CLIENT_ID` is unset, the buttons fall back to a clearly-labelled demo account picker so judges can sign in offline without a real Google account.
@@ -244,7 +244,7 @@ echo/
 │   │       ├── FeatureCard.tsx              8 surface variants (4 pastel tints + 4 neutrals).
 │   │       ├── FeatureTag.tsx               Pill / rounded-lg tags.
 │   │       ├── NavBar.tsx                   Liquid-glass top nav: blur(24px) saturate(180%).
-│   │       ├── Footer.tsx                   Stripped to "Built for the All Things Agentic Hackathon".
+│   │       ├── Footer.tsx                   Marketing site footer.
 │   │       ├── PasswordInput.tsx            Show/hide eye toggle.
 │   │       ├── echo-hero.tsx                Cinematic full-bleed <video> + ambient wind+birdsong
 │   │       │                                with glass mute pill, brightness-grade text shadows.
@@ -547,4 +547,4 @@ A full recording + build + dispatch round-trip takes ~30-60s end-to-end on a fre
 
 ## 11. License
 
-MIT. Built for the All Things Agentic Hackathon.
+MIT. Open source.
