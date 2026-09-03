@@ -94,7 +94,113 @@ client                              Next.js route                Google Cloud
 
 ---
 
-## 3. Hackathon tech checklist
+## 3. WebMCP integration (in-browser agent bridge)
+
+Echo exposes its dashboard to **in-browser AI agents** through the [WebMCP](https://developer.chrome.com/docs/ai/webmcp) standard. An agent running in Chrome (via the [Model Context Tool Inspector](https://chromewebstore.google.com/detail/model-context-tool-inspec/gbpdfapenggkahomfgkhfehlcenpd) extension, or the in-app browser of an AI assistant that supports WebMCP) can see and call the same Echo tools the user clicks in the UI. No copy-pasting, no screen-scraping, no hand-rolled JSON contracts.
+
+### Where it lives in the codebase
+
+```
+src/
+  lib/webmcp/
+    types.ts              TypeScript declarations for document.modelContext
+                          (registerTool · getTools · content envelope)
+    use-webmcp.ts         React hook — feature-detect, register, abort on unmount
+    global-tools.ts       5 ambient tools (every page): navigate, status, toast, wait, ping
+    composer-tools.ts     6 composer tools: preview, dispatch, set goal, start, fire, get state
+    skills-tools.ts       7 skill-library tools: list, get, find, get_md, create, dispatch, delete
+    runs-tools.ts         5 run-history tools: list, get, stats, find, cancel
+    agents-tools.ts       6 saved-agent tools: list, get, dispatch, archive, delete, overview
+  components/
+    webmcp-badge.tsx      Topbar pill: "WebMCP · N tools" + popover with the full tool list
+    webmcp-toast-host.tsx Listens for show_toast events and renders transient pills
+```
+
+### How it works (the mechanism)
+
+1. **Feature-detect** — `useWebMCPTools` calls `document.modelContext` and falls back to a no-op if the browser doesn't expose it. The page works exactly as before; WebMCP is a pure progressive enhancement.
+2. **Register** — each tool is registered through `document.modelContext.registerTool({ name, title, description, inputSchema, annotations, execute }, { signal })`. Names are unique per page; duplicates log a warning and are skipped.
+3. **JSON Schema** — every tool declares its inputs as a JSON Schema (`type: "object"`, `properties`, `required`, plus per-tool `enum` constraints). The agent uses the schema to validate its arguments before calling.
+4. **Annotations** — every read-only tool sets `annotations.readOnlyHint: true`; every mutating tool leaves it `false` (or omits it). Agents that respect the hint can auto-approve safe calls.
+5. **Result envelope** — `execute` returns any JSON-serializable value. The hook wraps it in `{ content: [{ type: "text", text: JSON.stringify(result) }] }` and catches thrown errors as `{ content: [...], isError: true }`.
+6. **Stable lifecycle** — one `AbortController` per page mount; aborting unregisters every tool atomically. No leaks across remounts. The body of each tool is read from a ref-map on every invocation so a body-only update never forces a re-register.
+
+### The 29 tools, by page
+
+| Page | Tools mounted | What an agent can do |
+| --- | --- | --- |
+| (global, every page) | 5 | Navigate, inspect status, fire a toast, sleep, ping |
+| `/compose` | 5 + 6 + 7 + 5 + 6 = **29** (full set) | Compose plans, dispatch runs, list/read saved skills, cancel runs, manage agents |
+| `/skills` | 5 + 7 = 12 | Read and dispatch the saved skill library |
+| `/agents` | 5 + 6 = 11 | List and re-dispatch saved agents |
+| `/runs` | 5 + 5 = 10 | Inspect run history and cancel active runs |
+| `/record` | 5 + 7 = 12 | List and read skills while the user is mid-recording |
+
+`/compose` mounts the full set so an agent can do the "library-inspect → compose-plan → dispatch-run" flow from a single page. The other pages mount their page-local set plus the global five. A live `WebMCP · N tools` pill in the topbar shows the running count on whichever page you're on; click it to see the full tool list, the Inspector extension link, and the Chrome docs link.
+
+### Headline tools for the demo
+
+- `get_skill_md({ skillId })` — returns the portable `SKILL.md` text for a saved skill. YAML frontmatter + parameterized body with `{{token}}` placeholders + rules + error codes. Drop the result into any agent runtime.
+- `dispatch_saved_skill({ skillId, goal, inputCount })` — fires a saved skill as an autonomous run. "Use this skill to do X."
+- `compose_echo_agent({ goal, inputCount })` — the headline end-to-end tool. Takes a plain-English goal, plans it, and dispatches. Returns `runId`, `agentId`, `inputs`, `gcp`.
+
+### How to test it locally
+
+```bash
+# 1. Open Chrome 149+ (or with the WebMCP origin trial flag enabled):
+#    chrome://flags/#enable-webmcp-testing
+# 2. Install the Model Context Tool Inspector extension
+# 3. Visit https://echo-one-liard.vercel.app/compose (sign in first)
+# 4. Open the Inspector. You'll see 29 tools listed (5 global + 6
+#    composer + 7 skills + 5 runs + 6 agents).
+# 5. Click 'list_skills' to see the saved library. Or click
+#    'get_skill_md' and pass any id from the list. Or click
+#    'dispatch_saved_skill' and pass { skillId, goal, inputCount: 3 }
+#    to start a real run.
+```
+
+The Inspector extension sends prompts to `gemini-3-flash-preview` by default; that's the model the WebMCP team uses to evaluate tool discovery and call correctness, and it's a useful sanity check that your `inputSchema` is parseable and your tool descriptions are clear.
+
+### What a tool looks like in code
+
+```typescript
+// src/lib/webmcp/skills-tools.ts
+{
+  name: "get_skill_md",
+  title: "Get SKILL.md",
+  description:
+    "Generate and return the portable SKILL.md text for a saved skill. " +
+    "The markdown is fully parameterized with {{token}} placeholders, has " +
+    "YAML frontmatter, rules, and error codes. The agent can then execute " +
+    "the workflow itself, paste the markdown into another runtime, or " +
+    "pass it to the user.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      skillId: { type: "string", description: "The skill id to render." },
+    },
+    required: ["skillId"],
+  },
+  annotations: { readOnlyHint: true },
+  execute: ({ skillId }) => {
+    const s = findSkill(userId, String(skillId));
+    if (!s) throw new Error(`skill ${skillId} not found`);
+    const md = generateSkillFromRecordSmart(s);
+    return {
+      skillId: s.id,
+      name: s.name,
+      markdown: md,
+      bytes: md.length,
+      format: s.built?.version === 1 ? "builder-v1" : "recorded",
+    };
+  },
+},
+```
+
+The whole WebMCP surface is **no new dependencies** (the API is browser-native), **no backend changes** (the same `/api/*` routes the buttons hit), and **no new LLM calls** (the same Describer + Builder agents power the composer's agentic flow).
+
+
+## 4. Hackathon tech checklist
 
 | Devpost requirement | Where it lives in Echo |
 |---|---|
@@ -104,11 +210,11 @@ client                              Next.js route                Google Cloud
 | **Working webapp** | Next.js 16 (App Router) + React 19 + Tailwind v4 — 17 pages, real screen capture, 4 real API routes, all 200 OK. |
 | **Architecture diagram** | Mermaid in this README (section 2) + `docs/architecture.md`. |
 | **Demo video** | Uploaded separately to YouTube (see Devpost submission). |
-| **Public repo with spin-up instructions** | Sections 4 + 5 below. |
+| **Public repo with spin-up instructions** | Sections 5 + 6 below. |
 
 ---
 
-## 4. Quick start
+## 5. Quick start
 
 ```bash
 # 1. Install
@@ -136,7 +242,7 @@ pnpm smoke:agent                       # ADK agent via Vertex AI; needs GCP_ENAB
 
 ---
 
-## 5. Configuration
+## 6. Configuration
 
 ### Environment variables (`.env.local`)
 
@@ -186,7 +292,7 @@ All write paths are best-effort: a GCP failure logs a warning but never breaks t
 
 ---
 
-## 6. Source code map (where the resources / tools are)
+## 7. Source code map (where the resources / tools are)
 
 ```
 echo/
@@ -323,7 +429,7 @@ Pub/Sub
 
 ---
 
-## 7. GCP services, end-to-end
+## 8. GCP services, end-to-end
 
 | Service | Project resource | Used for | Code path |
 |---|---|---|---|
@@ -384,7 +490,7 @@ pnpm worker:deploy  # or just push to main — cloudbuild.yaml deploys both serv
 
 ---
 
-## 8. Local dev with real GCP
+## 9. Local dev with real GCP
 
 Echo uses **Application Default Credentials (ADC)** — no JSON service-account key file is required.
 
@@ -457,7 +563,7 @@ The runtime service account is the default Cloud Run compute SA — it already h
 
 ---
 
-## 9. Tech choices, briefly
+## 10. Tech choices, briefly
 
 - **Web-only, no Electron** — `getDisplayMedia` is the browser-native screen capture API. One binary, works on Mac + Windows + Linux. The `preferCurrentTab: true, selfBrowserSurface: 'include'` hints give a clean single-tab capture with no flicker.
 - **Next.js 16 + React 19** — Server Components keep initial HTML small (good for SEO + demo frame extraction). Route Handlers co-locate the API with the UI, so the same project ships as the dashboard and the API.
@@ -471,7 +577,7 @@ The runtime service account is the default Cloud Run compute SA — it already h
 
 ---
 
-## 10. Testing
+## 11. Testing
 
 Echo ships with a 4-layer test surface so anyone can verify the project works end-to-end without GCP credentials:
 
@@ -545,6 +651,6 @@ A full recording + build + dispatch round-trip takes ~30-60s end-to-end on a fre
 - All 17 pages: render with zero console errors
 - End-to-end with real Gemini: 1 saved skill + 1 dispatched run visible in the library
 
-## 11. License
+## 12. License
 
 MIT. Open source.
